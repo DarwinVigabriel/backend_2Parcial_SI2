@@ -89,6 +89,7 @@ INSTALLED_APPS = [
     'apps.clients',
     # REST API
     'rest_framework',
+    'drf_spectacular',
 ]
 
 MIDDLEWARE = [
@@ -188,3 +189,13 @@ REST_FRAMEWORK = {
 REST_FRAMEWORK.setdefault('DEFAULT_PAGINATION_CLASS', 'rest_framework.pagination.PageNumberPagination')
 REST_FRAMEWORK.setdefault('PAGE_SIZE', 20)
 REST_FRAMEWORK.setdefault('DEFAULT_FILTER_BACKENDS', ['rest_framework.filters.SearchFilter', 'rest_framework.filters.OrderingFilter'])
+
+# Use drf-spectacular as the default schema generator if installed
+REST_FRAMEWORK.setdefault('DEFAULT_SCHEMA_CLASS', 'drf_spectacular.openapi.AutoSchema')
+
+# Optional spectacular settings (tweak if needed)
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'SmartSales360 API',
+    'DESCRIPTION': 'API para SmartSales360 (web + móvil)',
+    'VERSION': '1.0.0',
+}

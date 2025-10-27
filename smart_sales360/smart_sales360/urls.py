@@ -17,8 +17,23 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+try:
+    # Import optional schema views (drf-spectacular) if available
+    from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+    SPECTACULAR_AVAILABLE = True
+except Exception:
+    SpectacularAPIView = None
+    SpectacularSwaggerView = None
+    SPECTACULAR_AVAILABLE = False
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     # API routes for the apps (categories, products, clients, stock, auth, company)
     path('api/', include('apps.urls')),
 ]
+
+if SPECTACULAR_AVAILABLE:
+    urlpatterns += [
+        path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+        path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    ]
