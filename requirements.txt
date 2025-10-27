@@ -1,9 +1,16 @@
-django>=5.2.7
-djangorestframework
-python-dotenv
-dj-database-url
-psycopg2-binary
-PyJWT
+asgiref==3.10.0
+dj-database-url==3.0.1
+Django==5.2.7
+djangorestframework==3.16.1
+psycopg2-binary==2.9.11
+PyJWT==2.10.1
+python-dotenv==1.2.1
+sqlparse==0.5.3
+tzdata==2025.2
+
+# Documentation generator (OpenAPI/Swagger)
+# install before using the schema endpoints
+drf-spectacular
 
 # If your DB uses bcrypt password hashes, also add:
 # bcrypt
