@@ -85,6 +85,7 @@ INSTALLED_APPS = [
     'apps.categories',
     'apps.products',
     'apps.stock',
+    'apps.sales',
     'apps.clients',
     # REST API
     'rest_framework',
@@ -182,3 +183,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
     ),
 }
+
+# Pagination and filters for API
+REST_FRAMEWORK.setdefault('DEFAULT_PAGINATION_CLASS', 'rest_framework.pagination.PageNumberPagination')
+REST_FRAMEWORK.setdefault('PAGE_SIZE', 20)
+REST_FRAMEWORK.setdefault('DEFAULT_FILTER_BACKENDS', ['rest_framework.filters.SearchFilter', 'rest_framework.filters.OrderingFilter'])
