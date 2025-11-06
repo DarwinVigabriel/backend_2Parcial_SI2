@@ -102,6 +102,10 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# Configuración CSRF para desarrollo
+CSRF_TRUSTED_ORIGINS = ['http://127.0.0.1:8000', 'http://localhost:8000']
+CSRF_COOKIE_HTTPONLY = False  # Permite acceso desde JavaScript
+
 ROOT_URLCONF = 'smart_sales360.urls'
 
 TEMPLATES = [

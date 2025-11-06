@@ -1,0 +1,11 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls static %}
+
+{% block object-tools-items %}
+    {{ block.super }}
+    <li>
+        <a href="{% url 'admin:sales_cart_test' %}" class="historylink">
+            🎤 Probar Carrito (Texto y Voz)
+        </a>
+    </li>
+{% endblock %}

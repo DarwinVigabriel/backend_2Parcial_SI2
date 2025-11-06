@@ -1,0 +1,739 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Probar Carrito de Compra - Texto y Voz{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .test-container {
+        max-width: 1200px;
+        margin: 20px auto;
+        padding: 20px;
+    }
+    
+    .test-section {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    
+    .test-section h2 {
+        margin-top: 0;
+        color: #417690;
+        border-bottom: 2px solid #417690;
+        padding-bottom: 10px;
+    }
+    
+    .test-section h3 {
+        color: #666;
+        margin-top: 20px;
+    }
+    
+    .form-group {
+        margin-bottom: 15px;
+    }
+    
+    .form-group label {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    
+    .form-group input,
+    .form-group select {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-sizing: border-box;
+    }
+    
+    .btn {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        margin-right: 10px;
+        margin-top: 10px;
+    }
+    
+    .btn-primary {
+        background: #417690;
+        color: white;
+    }
+    
+    .btn-primary:hover {
+        background: #2e5a70;
+    }
+    
+    .btn-success {
+        background: #28a745;
+        color: white;
+    }
+    
+    .btn-success:hover {
+        background: #218838;
+    }
+    
+    .btn-danger {
+        background: #dc3545;
+        color: white;
+    }
+    
+    .btn-danger:hover {
+        background: #c82333;
+    }
+    
+    .btn-warning {
+        background: #ffc107;
+        color: #000;
+    }
+    
+    .btn-warning:hover {
+        background: #e0a800;
+    }
+    
+    .response-box {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 15px;
+        margin-top: 15px;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .response-box pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+    
+    .success {
+        color: #28a745;
+        font-weight: bold;
+    }
+    
+    .error {
+        color: #dc3545;
+        font-weight: bold;
+    }
+    
+    .info {
+        background: #d1ecf1;
+        border: 1px solid #bee5eb;
+        color: #0c5460;
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 15px;
+    }
+    
+    .recording {
+        animation: pulse 1.5s ease-in-out infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    .voice-commands {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+    
+    .voice-commands h4 {
+        margin-top: 0;
+        color: #856404;
+    }
+    
+    .voice-commands ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+    
+    .voice-commands li {
+        margin: 5px 0;
+        color: #000;
+    }
+    
+    .voice-commands li strong {
+        color: #000;
+    }
+    
+    .cart-display {
+        background: #e7f3ff;
+        border: 1px solid #b3d9ff;
+        border-radius: 4px;
+        padding: 15px;
+        margin-top: 15px;
+    }
+    
+    .cart-item {
+        background: white;
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin: 5px 0;
+        border-radius: 4px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="test-container">
+    <h1>🛒 Probar Carrito de Compra - CU11</h1>
+    
+    <div class="info">
+        <strong>ℹ️ Información:</strong> Utiliza esta página para probar las funcionalidades del carrito de compra tanto por texto como por voz usando OpenAI Whisper.
+    </div>
+
+    <!-- Sección de Información del Carrito -->
+    <div class="test-section">
+        <h2>📋 Información del Carrito</h2>
+        <div class="form-group">
+            <label>ID del Carrito (UUID):</label>
+            <input type="text" id="cart-id" placeholder="Dejar vacío para crear uno nuevo">
+        </div>
+        <button class="btn btn-primary" onclick="loadCart()">🔄 Cargar Carrito</button>
+        <button class="btn btn-success" onclick="createNewCart()">➕ Crear Nuevo Carrito</button>
+        
+        <div id="cart-display" class="cart-display" style="display:none;">
+            <h3>Contenido del Carrito</h3>
+            <div id="cart-content"></div>
+        </div>
+    </div>
+
+    <!-- Sección de Operaciones por Texto -->
+    <div class="test-section">
+        <h2>✍️ Operaciones por Texto</h2>
+        
+        <h3>Agregar Producto</h3>
+        <div class="form-group">
+            <label>SKU del Producto:</label>
+            <input type="text" id="add-sku" placeholder="Ej: PROD001">
+        </div>
+        <div class="form-group">
+            <label>Cantidad:</label>
+            <input type="number" id="add-quantity" value="1" min="1">
+        </div>
+        <button class="btn btn-primary" onclick="addItem()">➕ Agregar al Carrito</button>
+        
+        <h3>Actualizar Item</h3>
+        <div class="form-group">
+            <label>ID del Item:</label>
+            <input type="number" id="update-item-id" placeholder="Ej: 5">
+        </div>
+        <div class="form-group">
+            <label>Nueva Cantidad:</label>
+            <input type="number" id="update-quantity" value="1" min="1">
+        </div>
+        <button class="btn btn-warning" onclick="updateItem()">✏️ Actualizar Cantidad</button>
+        
+        <h3>Eliminar Item</h3>
+        <div class="form-group">
+            <label>ID del Item:</label>
+            <input type="number" id="remove-item-id" placeholder="Ej: 5">
+        </div>
+        <button class="btn btn-danger" onclick="removeItem()">🗑️ Eliminar Item</button>
+        
+        <h3>Otras Acciones</h3>
+        <button class="btn btn-danger" onclick="clearCart()">🗑️ Vaciar Carrito</button>
+        <button class="btn btn-success" onclick="checkout()">✅ Finalizar Compra</button>
+        
+        <div id="text-response" class="response-box" style="display:none;">
+            <h4>Respuesta:</h4>
+            <pre id="text-response-content"></pre>
+        </div>
+    </div>
+
+    <!-- Sección de Comandos de Voz -->
+    <div class="test-section">
+        <h2>🎤 Comandos de Voz con OpenAI Whisper</h2>
+        
+        <div class="voice-commands">
+            <h4>📝 Comandos de Voz Disponibles:</h4>
+            <p><strong>✨ Sistema mejorado con modelo Whisper "small" para mayor precisión</strong></p>
+            <ul>
+                <li><strong>Agregar:</strong> 
+                    <ul>
+                        <li>"agregar 3 unidades del producto SKU ABC123"</li>
+                        <li>"añadir cinco del PROD001"</li>
+                        <li>"mete dos del producto XYZ789"</li>
+                    </ul>
+                </li>
+                <li><strong>Eliminar:</strong> 
+                    <ul>
+                        <li>"eliminar item 5"</li>
+                        <li>"quitar producto SKU ABC123"</li>
+                        <li>"borrar item dos"</li>
+                    </ul>
+                </li>
+                <li><strong>Actualizar:</strong> 
+                    <ul>
+                        <li>"actualizar cantidad a 10 del item 3"</li>
+                        <li>"cambiar a cinco del item dos"</li>
+                    </ul>
+                </li>
+                <li><strong>Vaciar:</strong> "vaciar carrito", "limpiar carrito"</li>
+                <li><strong>Finalizar:</strong> "finalizar compra", "terminar compra"</li>
+                <li><strong>Ver:</strong> "mostrar carrito", "ver carrito"</li>
+            </ul>
+            <p><strong>💡 Consejos:</strong></p>
+            <ul>
+                <li>Habla claro y pausado</li>
+                <li>Puedes decir números en español (tres, cinco, diez)</li>
+                <li>El SKU puede decirse sin la palabra "SKU" (ej: "PROD001")</li>
+                <li>Usa un ambiente silencioso para mejor reconocimiento</li>
+            </ul>
+        </div>
+        
+        <div class="form-group">
+            <label>Subir Archivo de Audio:</label>
+            <input type="file" id="audio-file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.webm">
+        </div>
+        
+        <div class="form-group">
+            <label>O Grabar Audio:</label>
+            <button class="btn btn-danger" id="record-btn" onclick="toggleRecording()">🎙️ Iniciar Grabación</button>
+            <span id="recording-status"></span>
+        </div>
+        
+        <button class="btn btn-success" onclick="sendVoiceCommand()">🎤 Procesar Comando de Voz</button>
+        
+        <div id="voice-response" class="response-box" style="display:none;">
+            <h4>Respuesta:</h4>
+            <div id="voice-transcription"></div>
+            <pre id="voice-response-content"></pre>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_BASE = '/api/sales/carts/';
+    let currentCartId = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+
+    // Función para obtener el CSRF token de Django
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+    
+    const csrftoken = getCookie('csrftoken');
+
+    // Función auxiliar para crear headers con autenticación de sesión
+    function getHeaders(includeContentType = true) {
+        const headers = {
+            'X-CSRFToken': csrftoken
+        };
+        if (includeContentType) {
+            headers['Content-Type'] = 'application/json';
+        }
+        return headers;
+    }
+
+    // Cargar carrito
+    async function loadCart() {
+        const cartId = document.getElementById('cart-id').value;
+        if (!cartId) {
+            showTextResponse({error: 'Por favor ingresa un ID de carrito válido'}, 'error');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_BASE}${cartId}/`, {
+                credentials: 'same-origin'
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                currentCartId = cartId;
+                displayCart(data);
+                showTextResponse(data, 'success');
+            } else {
+                showTextResponse(data, 'error');
+            }
+        } catch (error) {
+            showTextResponse({error: error.message}, 'error');
+        }
+    }
+
+    // Crear nuevo carrito
+    async function createNewCart() {
+        try {
+            const response = await fetch(API_BASE, {
+                method: 'POST',
+                headers: getHeaders(),
+                credentials: 'same-origin',
+                body: JSON.stringify({status: 'open'})
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                currentCartId = data.id;
+                document.getElementById('cart-id').value = data.id;
+                displayCart(data);
+                showTextResponse(data, 'success');
+            } else {
+                showTextResponse(data, 'error');
+            }
+        } catch (error) {
+            showTextResponse({error: error.message}, 'error');
+        }
+    }
+
+    // Agregar item
+    async function addItem() {
+        const cartId = currentCartId || document.getElementById('cart-id').value;
+        const sku = document.getElementById('add-sku').value;
+        const quantity = parseInt(document.getElementById('add-quantity').value);
+        
+        if (!cartId) {
+            showTextResponse({error: 'Primero carga o crea un carrito'}, 'error');
+            return;
+        }
+        
+        if (!sku) {
+            showTextResponse({error: 'Ingresa un SKU válido'}, 'error');
+            return;
+        }
+        
+        try {
+            // Primero buscar el producto por SKU
+            const productResponse = await fetch(`/api/products/productos/?search=${sku}`);
+            const products = await productResponse.json();
+            
+            if (!products.results || products.results.length === 0) {
+                showTextResponse({error: `Producto con SKU ${sku} no encontrado`}, 'error');
+                return;
+            }
+            
+            const producto = products.results[0];
+            
+            const response = await fetch(`${API_BASE}${cartId}/add_item/`, {
+                method: 'POST',
+                headers: getHeaders(),
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    producto: producto.id,
+                    quantity: quantity
+                })
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                displayCart(data);
+                showTextResponse(data, 'success');
+                document.getElementById('add-sku').value = '';
+            } else {
+                showTextResponse(data, 'error');
+            }
+        } catch (error) {
+            showTextResponse({error: error.message}, 'error');
+        }
+    }
+
+    // Actualizar item
+    async function updateItem() {
+        const cartId = currentCartId || document.getElementById('cart-id').value;
+        const itemId = document.getElementById('update-item-id').value;
+        const quantity = parseInt(document.getElementById('update-quantity').value);
+        
+        if (!cartId || !itemId) {
+            showTextResponse({error: 'Ingresa el ID del carrito y del item'}, 'error');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_BASE}${cartId}/update_item/`, {
+                method: 'POST',
+                headers: getHeaders(),
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    item_id: itemId,
+                    quantity: quantity
+                })
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                displayCart(data);
+                showTextResponse(data, 'success');
+            } else {
+                showTextResponse(data, 'error');
+            }
+        } catch (error) {
+            showTextResponse({error: error.message}, 'error');
+        }
+    }
+
+    // Eliminar item
+    async function removeItem() {
+        const cartId = currentCartId || document.getElementById('cart-id').value;
+        const itemId = document.getElementById('remove-item-id').value;
+        
+        if (!cartId || !itemId) {
+            showTextResponse({error: 'Ingresa el ID del carrito y del item'}, 'error');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_BASE}${cartId}/remove_item/`, {
+                method: 'POST',
+                headers: getHeaders(),
+                credentials: 'same-origin',
+                body: JSON.stringify({item_id: itemId})
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                displayCart(data);
+                showTextResponse(data, 'success');
+                document.getElementById('remove-item-id').value = '';
+            } else {
+                showTextResponse(data, 'error');
+            }
+        } catch (error) {
+            showTextResponse({error: error.message}, 'error');
+        }
+    }
+
+    // Vaciar carrito
+    async function clearCart() {
+        const cartId = currentCartId || document.getElementById('cart-id').value;
+        
+        if (!cartId) {
+            showTextResponse({error: 'Primero carga o crea un carrito'}, 'error');
+            return;
+        }
+        
+        if (!confirm('¿Estás seguro de vaciar el carrito?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_BASE}${cartId}/clear/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken
+                },
+                credentials: 'same-origin'
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                displayCart(data);
+                showTextResponse(data, 'success');
+            } else {
+                showTextResponse(data, 'error');
+            }
+        } catch (error) {
+            showTextResponse({error: error.message}, 'error');
+        }
+    }
+
+    // Finalizar compra
+    async function checkout() {
+        const cartId = currentCartId || document.getElementById('cart-id').value;
+        
+        if (!cartId) {
+            showTextResponse({error: 'Primero carga o crea un carrito'}, 'error');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${API_BASE}${cartId}/checkout/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken
+                },
+                credentials: 'same-origin'
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                showTextResponse(data, 'success');
+                loadCart(); // Recargar carrito
+            } else {
+                showTextResponse(data, 'error');
+            }
+        } catch (error) {
+            showTextResponse({error: error.message}, 'error');
+        }
+    }
+
+    // Procesar comando de voz
+    async function sendVoiceCommand() {
+        const audioFile = document.getElementById('audio-file').files[0];
+        const cartId = currentCartId || document.getElementById('cart-id').value;
+        
+        if (!audioFile) {
+            showVoiceResponse({error: 'Por favor selecciona un archivo de audio o graba uno'}, 'error');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('audio', audioFile);
+        if (cartId) {
+            formData.append('cart_id', cartId);
+        }
+        
+        try {
+            showVoiceResponse({message: 'Procesando audio con Whisper...'}, 'info');
+            
+            const response = await fetch(`${API_BASE}voice_command/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': csrftoken
+                },
+                credentials: 'same-origin',
+                body: formData
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                if (data.cart_id) {
+                    currentCartId = data.cart_id;
+                    document.getElementById('cart-id').value = data.cart_id;
+                }
+                
+                if (data.cart) {
+                    displayCart(data.cart);
+                }
+                
+                showVoiceResponse(data, 'success');
+            } else {
+                showVoiceResponse(data, 'error');
+            }
+        } catch (error) {
+            showVoiceResponse({error: error.message}, 'error');
+        }
+    }
+
+    // Grabar audio
+    async function toggleRecording() {
+        if (!isRecording) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.addEventListener('dataavailable', event => {
+                    audioChunks.push(event.data);
+                });
+                
+                mediaRecorder.addEventListener('stop', () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const audioFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
+                    
+                    // Crear un FileList simulado
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(audioFile);
+                    document.getElementById('audio-file').files = dataTransfer.files;
+                    
+                    document.getElementById('recording-status').textContent = '✅ Grabación completada. Procesando...';
+                    
+                    // Procesar automáticamente el comando de voz
+                    setTimeout(() => {
+                        sendVoiceCommand();
+                    }, 500);
+                });
+                
+                mediaRecorder.start();
+                isRecording = true;
+                document.getElementById('record-btn').textContent = '⏹️ Detener Grabación';
+                document.getElementById('record-btn').classList.add('recording');
+                document.getElementById('recording-status').textContent = '🔴 Grabando...';
+            } catch (error) {
+                alert('Error al acceder al micrófono: ' + error.message);
+            }
+        } else {
+            mediaRecorder.stop();
+            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            isRecording = false;
+            document.getElementById('record-btn').textContent = '🎙️ Iniciar Grabación';
+            document.getElementById('record-btn').classList.remove('recording');
+            document.getElementById('recording-status').textContent = '';
+        }
+    }
+
+    // Mostrar carrito
+    function displayCart(cart) {
+        const display = document.getElementById('cart-display');
+        const content = document.getElementById('cart-content');
+        
+        let html = `
+            <p><strong>ID:</strong> ${cart.id}</p>
+            <p><strong>Estado:</strong> ${cart.status}</p>
+            <p><strong>Total:</strong> $${cart.total}</p>
+            <p><strong>Items:</strong> ${cart.items_count || cart.items.length}</p>
+            <h4>Productos:</h4>
+        `;
+        
+        if (cart.items && cart.items.length > 0) {
+            cart.items.forEach(item => {
+                html += `
+                    <div class="cart-item">
+                        <strong>ID: ${item.id}</strong> - 
+                        ${item.producto_detail ? item.producto_detail.nombre : 'Producto #' + item.producto} 
+                        (x${item.quantity}) - 
+                        $${item.price} c/u = 
+                        <strong>$${item.subtotal || (item.price * item.quantity)}</strong>
+                    </div>
+                `;
+            });
+        } else {
+            html += '<p><em>El carrito está vacío</em></p>';
+        }
+        
+        content.innerHTML = html;
+        display.style.display = 'block';
+    }
+
+    // Mostrar respuesta de texto
+    function showTextResponse(data, type) {
+        const box = document.getElementById('text-response');
+        const content = document.getElementById('text-response-content');
+        
+        content.textContent = JSON.stringify(data, null, 2);
+        content.className = type;
+        box.style.display = 'block';
+    }
+
+    // Mostrar respuesta de voz
+    function showVoiceResponse(data, type) {
+        const box = document.getElementById('voice-response');
+        const transcription = document.getElementById('voice-transcription');
+        const content = document.getElementById('voice-response-content');
+        
+        if (data.transcription) {
+            transcription.innerHTML = `<p><strong>Transcripción:</strong> "${data.transcription}"</p>`;
+        } else {
+            transcription.innerHTML = '';
+        }
+        
+        content.textContent = JSON.stringify(data, null, 2);
+        content.className = type;
+        box.style.display = 'block';
+    }
+</script>
+{% endblock %}
