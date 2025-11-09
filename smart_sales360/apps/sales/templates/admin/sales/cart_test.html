@@ -174,6 +174,13 @@
         border-radius: 4px;
         padding: 15px;
         margin-top: 15px;
+        color: #000;
+    }
+    
+    .cart-display p,
+    .cart-display h3,
+    .cart-display h4 {
+        color: #000;
     }
     
     .cart-item {
@@ -182,6 +189,11 @@
         padding: 10px;
         margin: 5px 0;
         border-radius: 4px;
+        color: #000;
+    }
+    
+    .cart-item strong {
+        color: #000;
     }
 </style>
 {% endblock %}
@@ -297,12 +309,15 @@
         <div class="form-group">
             <label>Subir Archivo de Audio:</label>
             <input type="file" id="audio-file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.webm">
+            <div id="audio-info" style="margin-top: 5px; font-size: 12px; color: #666;"></div>
         </div>
         
         <div class="form-group">
             <label>O Grabar Audio:</label>
             <button class="btn btn-danger" id="record-btn" onclick="toggleRecording()">🎙️ Iniciar Grabación</button>
             <span id="recording-status"></span>
+            <div id="audio-level" style="margin-top: 10px; font-size: 14px; font-weight: bold;"></div>
+            <div id="audio-preview" style="margin-top: 10px;"></div>
         </div>
         
         <button class="btn btn-success" onclick="sendVoiceCommand()">🎤 Procesar Comando de Voz</button>
@@ -321,6 +336,12 @@
     let mediaRecorder = null;
     let audioChunks = [];
     let isRecording = false;
+    let audioContext = null;
+    let analyser = null;
+    let microphone = null;
+    let levelCheckInterval = null;
+    let recordingStartTime = null;
+    let recordingTimer = null;
 
     // Función para obtener el CSRF token de Django
     function getCookie(name) {
@@ -339,6 +360,21 @@
     }
     
     const csrftoken = getCookie('csrftoken');
+
+    // Mostrar información del archivo de audio seleccionado
+    document.getElementById('audio-file').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            const info = document.getElementById('audio-info');
+            const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+            info.innerHTML = `
+                ✅ Archivo seleccionado: <strong>${file.name}</strong><br>
+                📦 Tamaño: ${sizeMB} MB<br>
+                🎵 Tipo: ${file.type || 'desconocido'}
+            `;
+            info.style.color = '#28a745';
+        }
+    });
 
     // Función auxiliar para crear headers con autenticación de sesión
     function getHeaders(includeContentType = true) {
@@ -591,6 +627,14 @@
             return;
         }
         
+        // Mostrar información del archivo
+        console.log('📤 Enviando audio:', {
+            nombre: audioFile.name,
+            tamaño: `${(audioFile.size / 1024).toFixed(2)} KB`,
+            tipo: audioFile.type,
+            lastModified: new Date(audioFile.lastModified).toISOString()
+        });
+        
         const formData = new FormData();
         formData.append('audio', audioFile);
         if (cartId) {
@@ -598,8 +642,11 @@
         }
         
         try {
-            showVoiceResponse({message: 'Procesando audio con Whisper...'}, 'info');
+            showVoiceResponse({
+                message: `Procesando audio con Whisper...\n📦 Tamaño: ${(audioFile.size / 1024).toFixed(2)} KB\n⏱️ Esto puede tomar 5-10 segundos...`
+            }, 'info');
             
+            const startTime = Date.now();
             const response = await fetch(`${API_BASE}voice_command/`, {
                 method: 'POST',
                 headers: {
@@ -609,6 +656,9 @@
                 body: formData
             });
             const data = await response.json();
+            const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+            
+            console.log(`✅ Respuesta recibida en ${duration}s:`, data);
             
             if (response.ok) {
                 if (data.cart_id) {
@@ -622,20 +672,116 @@
                 
                 showVoiceResponse(data, 'success');
             } else {
+                // Mostrar información de debug si está disponible
+                if (data.debug_info) {
+                    console.warn('🔍 Debug info:', data.debug_info);
+                }
                 showVoiceResponse(data, 'error');
             }
         } catch (error) {
+            console.error('❌ Error en sendVoiceCommand:', error);
             showVoiceResponse({error: error.message}, 'error');
         }
     }
 
-    // Grabar audio
+    // Grabar audio con visualización
     async function toggleRecording() {
         if (!isRecording) {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(stream);
+                // Solicitar audio con mejor calidad
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: 48000  // Alta calidad
+                    }
+                });
+                
+                // Configurar MediaRecorder con mejor calidad
+                // Intentar diferentes configuraciones según soporte del navegador
+                let options = { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 128000 };
+                
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    console.warn('⚠️ audio/webm;codecs=opus no soportado, intentando alternativas...');
+                    options = { mimeType: 'audio/webm' };
+                }
+                
+                console.log('🎙️ Configuración de grabación:', options);
+                mediaRecorder = new MediaRecorder(stream, options);
                 audioChunks = [];
+                
+                // Configurar visualización de audio
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                analyser.fftSize = 256;
+                
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+                
+                // Monitorear nivel de audio en tiempo real
+                const audioLevelDiv = document.getElementById('audio-level');
+                levelCheckInterval = setInterval(() => {
+                    analyser.getByteFrequencyData(dataArray);
+                    const average = dataArray.reduce((a, b) => a + b) / bufferLength;
+                    const percentage = Math.round((average / 255) * 100);
+                    
+                    let emoji = '🔇';
+                    let color = '#dc3545';
+                    let message = 'Sin audio detectado';
+                    
+                    if (percentage > 5) {
+                        emoji = '🔊';
+                        color = '#28a745';
+                        message = 'Audio detectado correctamente';
+                    } else if (percentage > 2) {
+                        emoji = '🔉';
+                        color = '#ffc107';
+                        message = 'Audio muy bajo';
+                    }
+                    
+                    audioLevelDiv.innerHTML = `${emoji} Nivel de audio: ${percentage}% - <span style="color: ${color}">${message}</span>`;
+                }, 100);
+                
+                // Crear canvas para visualización
+                const preview = document.getElementById('audio-preview');
+                preview.innerHTML = '<canvas id="audio-canvas" width="400" height="100" style="border: 1px solid #ccc; border-radius: 4px;"></canvas>';
+                const canvas = document.getElementById('audio-canvas');
+                const canvasCtx = canvas.getContext('2d');
+                
+                // Animar visualización
+                function draw() {
+                    if (!isRecording) return;
+                    
+                    requestAnimationFrame(draw);
+                    
+                    analyser.getByteFrequencyData(dataArray);
+                    
+                    canvasCtx.fillStyle = 'rgb(240, 240, 240)';
+                    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+                    
+                    const barWidth = (canvas.width / bufferLength) * 2.5;
+                    let barHeight;
+                    let x = 0;
+                    
+                    for (let i = 0; i < bufferLength; i++) {
+                        barHeight = dataArray[i] / 2;
+                        
+                        // Color basado en intensidad
+                        const r = barHeight + 25;
+                        const g = 250 - barHeight;
+                        const b = 50;
+                        
+                        canvasCtx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+                        canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                        
+                        x += barWidth + 1;
+                    }
+                }
+                
+                draw();
                 
                 mediaRecorder.addEventListener('dataavailable', event => {
                     audioChunks.push(event.data);
@@ -650,7 +796,21 @@
                     dataTransfer.items.add(audioFile);
                     document.getElementById('audio-file').files = dataTransfer.files;
                     
+                    // Mostrar información del archivo grabado
+                    const info = document.getElementById('audio-info');
+                    const sizeMB = (audioFile.size / 1024 / 1024).toFixed(2);
+                    info.innerHTML = `
+                        ✅ Grabación completada: <strong>recording.webm</strong><br>
+                        📦 Tamaño: ${sizeMB} MB<br>
+                        🎵 Tipo: audio/webm<br>
+                        ⏱️ Procesando con Whisper...
+                    `;
+                    info.style.color = '#28a745';
+                    
                     document.getElementById('recording-status').textContent = '✅ Grabación completada. Procesando...';
+                    
+                    // Limpiar visualización
+                    document.getElementById('audio-preview').innerHTML = '';
                     
                     // Procesar automáticamente el comando de voz
                     setTimeout(() => {
@@ -660,16 +820,92 @@
                 
                 mediaRecorder.start();
                 isRecording = true;
+                recordingStartTime = Date.now();
+                
+                // Actualizar temporizador de grabación
+                recordingTimer = setInterval(() => {
+                    const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+                    const minutes = Math.floor(elapsed / 60);
+                    const seconds = elapsed % 60;
+                    const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                    
+                    let statusText = `🔴 Grabando... ${timeStr}`;
+                    if (elapsed < 2) {
+                        statusText += ' (habla claramente)';
+                    }
+                    
+                    document.getElementById('recording-status').textContent = statusText;
+                }, 100);
+                
                 document.getElementById('record-btn').textContent = '⏹️ Detener Grabación';
                 document.getElementById('record-btn').classList.add('recording');
-                document.getElementById('recording-status').textContent = '🔴 Grabando...';
+                document.getElementById('recording-status').textContent = '🔴 Grabando... (Habla ahora)';
             } catch (error) {
-                alert('Error al acceder al micrófono: ' + error.message);
+                alert('Error al acceder al micrófono: ' + error.message + '\n\nAsegúrate de dar permiso al micrófono en tu navegador.');
+                console.error('Error de micrófono:', error);
             }
         } else {
+            // Verificar duración mínima
+            const recordingDuration = (Date.now() - recordingStartTime) / 1000;
+            console.log(`⏱️ Duración de grabación: ${recordingDuration.toFixed(2)}s`);
+            
+            if (recordingDuration < 1) {
+                alert('⚠️ Grabación muy corta!\n\nPor favor graba al menos 1-2 segundos.\n\nIntentalo de nuevo y habla durante la grabación.');
+                
+                // Cancelar grabación
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                
+                if (audioContext) {
+                    audioContext.close();
+                    audioContext = null;
+                }
+                
+                if (levelCheckInterval) {
+                    clearInterval(levelCheckInterval);
+                    levelCheckInterval = null;
+                }
+                
+                if (recordingTimer) {
+                    clearInterval(recordingTimer);
+                    recordingTimer = null;
+                }
+                
+                document.getElementById('audio-level').innerHTML = '';
+                isRecording = false;
+                recordingStartTime = null;
+                audioChunks = [];
+                document.getElementById('record-btn').textContent = '🎙️ Iniciar Grabación';
+                document.getElementById('record-btn').classList.remove('recording');
+                document.getElementById('recording-status').textContent = '';
+                return;
+            }
+            
             mediaRecorder.stop();
             mediaRecorder.stream.getTracks().forEach(track => track.stop());
+            
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            if (levelCheckInterval) {
+                clearInterval(levelCheckInterval);
+                levelCheckInterval = null;
+            }
+            
+            if (recordingTimer) {
+                clearInterval(recordingTimer);
+                recordingTimer = null;
+            }
+            
+            // Limpiar indicador de nivel
+            document.getElementById('audio-level').innerHTML = '';
+            
             isRecording = false;
+            recordingStartTime = null;
             document.getElementById('record-btn').textContent = '🎙️ Iniciar Grabación';
             document.getElementById('record-btn').classList.remove('recording');
             document.getElementById('recording-status').textContent = '';

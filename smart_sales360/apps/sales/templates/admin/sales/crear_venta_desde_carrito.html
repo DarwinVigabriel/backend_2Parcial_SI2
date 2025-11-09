@@ -1,0 +1,251 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Crear Venta desde Carrito - {{ site_title|default:"Django site admin" }}{% endblock %}
+
+{% block extrahead %}
+<style>
+    .form-container {
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    .form-group label {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 8px;
+        color: #333;
+    }
+    .form-group select,
+    .form-group input {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+    .form-group select:focus,
+    .form-group input:focus {
+        outline: none;
+        border-color: #417690;
+        box-shadow: 0 0 0 3px rgba(65,118,144,0.1);
+    }
+    .form-group .help-text {
+        display: block;
+        margin-top: 5px;
+        font-size: 12px;
+        color: #666;
+    }
+    .cart-preview {
+        margin-top: 20px;
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 4px;
+        border: 1px solid #e9ecef;
+    }
+    .cart-preview h3 {
+        margin-top: 0;
+        color: #417690;
+    }
+    .cart-item {
+        padding: 10px 0;
+        border-bottom: 1px solid #dee2e6;
+    }
+    .cart-item:last-child {
+        border-bottom: none;
+    }
+    .cart-total {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 2px solid #417690;
+        font-size: 18px;
+        font-weight: bold;
+    }
+    .btn-submit {
+        background: #417690;
+        color: white;
+        padding: 12px 30px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        margin-top: 20px;
+    }
+    .btn-submit:hover {
+        background: #2e5266;
+    }
+    .btn-cancel {
+        background: #6c757d;
+        color: white;
+        padding: 12px 30px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        margin-left: 10px;
+        text-decoration: none;
+        display: inline-block;
+    }
+    .btn-cancel:hover {
+        background: #5a6268;
+        color: white;
+    }
+    .alert {
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+    }
+    .alert-info {
+        background: #d1ecf1;
+        border: 1px solid #bee5eb;
+        color: #0c5460;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <h1>🛒 Crear Venta desde Carrito</h1>
+    
+    <div class="alert alert-info">
+        <strong>📋 CU12: Registrar Venta</strong><br>
+        Selecciona un carrito abierto y un cliente para crear una nueva venta. El sistema calculará automáticamente los totales y actualizará el inventario.
+    </div>
+
+    <div class="form-container">
+        <form method="post" id="ventaForm">
+            {% csrf_token %}
+            
+            <div class="form-group">
+                <label for="cart_id">Carrito:</label>
+                <select name="cart_id" id="cart_id" required onchange="loadCartPreview()">
+                    <option value="">-- Seleccionar carrito --</option>
+                    {% for cart in carritos %}
+                    <option value="{{ cart.id }}" data-total="{{ cart.total }}" data-items="{{ cart.items.count }}">
+                        {{ cart.id|truncatechars:13 }} - 
+                        {{ cart.items.count }} item(s) - 
+                        ${{ cart.total }} - 
+                        {{ cart.created_at|date:"d/m/Y H:i" }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <span class="help-text">Selecciona un carrito de compra existente</span>
+            </div>
+
+            <div class="form-group">
+                <label for="cliente_id">Cliente:</label>
+                <select name="cliente_id" id="cliente_id" required>
+                    <option value="">-- Seleccionar cliente --</option>
+                    {% for cliente in clientes %}
+                    <option value="{{ cliente.id }}">
+                        {{ cliente.nombre_completo }} - {{ cliente.numero_documento }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <span class="help-text">Cliente que realiza la compra</span>
+            </div>
+
+            <div class="form-group">
+                <label for="tipo_venta">Tipo de Venta:</label>
+                <select name="tipo_venta" id="tipo_venta">
+                    <option value="mostrador">Venta en Mostrador</option>
+                    <option value="online">Venta en Línea</option>
+                    <option value="telefono">Venta por Teléfono</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="descuento">Descuento ($):</label>
+                <input type="number" name="descuento" id="descuento" step="0.01" min="0" value="0" onchange="calculateTotal()">
+                <span class="help-text">Descuento en dólares a aplicar a la venta</span>
+            </div>
+
+            <div class="form-group">
+                <label for="impuesto_porcentaje">Impuesto (%):</label>
+                <input type="number" name="impuesto_porcentaje" id="impuesto_porcentaje" step="0.01" min="0" max="100" value="13" onchange="calculateTotal()">
+                <span class="help-text">Porcentaje de impuesto (IVA)</span>
+            </div>
+
+            <div class="form-group">
+                <label for="notas">Notas (opcional):</label>
+                <textarea name="notas" id="notas" rows="3" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"></textarea>
+                <span class="help-text">Notas adicionales sobre la venta</span>
+            </div>
+
+            <div class="cart-preview" id="cartPreview" style="display: none;">
+                <h3>📦 Vista Previa del Carrito</h3>
+                <div id="cartItems"></div>
+                <div class="cart-total">
+                    <div>Subtotal: $<span id="subtotalDisplay">0.00</span></div>
+                    <div>Descuento: -$<span id="descuentoDisplay">0.00</span></div>
+                    <div>Impuesto (<span id="impuestoPercent">13</span>%): $<span id="impuestoDisplay">0.00</span></div>
+                    <div style="color: #417690; font-size: 20px; margin-top: 10px;">
+                        TOTAL: $<span id="totalDisplay">0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 30px;">
+                <button type="submit" class="btn-submit">✅ Crear Venta</button>
+                <a href="{% url 'admin:sales_venta_changelist' %}" class="btn-cancel">❌ Cancelar</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function loadCartPreview() {
+    const cartSelect = document.getElementById('cart_id');
+    const selectedOption = cartSelect.options[cartSelect.selectedIndex];
+    const cartPreview = document.getElementById('cartPreview');
+    
+    if (selectedOption.value) {
+        cartPreview.style.display = 'block';
+        calculateTotal();
+    } else {
+        cartPreview.style.display = 'none';
+    }
+}
+
+function calculateTotal() {
+    const cartSelect = document.getElementById('cart_id');
+    const selectedOption = cartSelect.options[cartSelect.selectedIndex];
+    
+    if (!selectedOption.value) return;
+    
+    const subtotal = parseFloat(selectedOption.dataset.total || 0);
+    const descuento = parseFloat(document.getElementById('descuento').value || 0);
+    const impuestoPorcentaje = parseFloat(document.getElementById('impuesto_porcentaje').value || 0);
+    
+    const subtotalConDescuento = subtotal - descuento;
+    const impuesto = (subtotalConDescuento * impuestoPorcentaje) / 100;
+    const total = subtotalConDescuento + impuesto;
+    
+    document.getElementById('subtotalDisplay').textContent = subtotal.toFixed(2);
+    document.getElementById('descuentoDisplay').textContent = descuento.toFixed(2);
+    document.getElementById('impuestoPercent').textContent = impuestoPorcentaje.toFixed(2);
+    document.getElementById('impuestoDisplay').textContent = impuesto.toFixed(2);
+    document.getElementById('totalDisplay').textContent = total.toFixed(2);
+}
+
+// Validación del formulario
+document.getElementById('ventaForm').addEventListener('submit', function(e) {
+    const cartId = document.getElementById('cart_id').value;
+    const clienteId = document.getElementById('cliente_id').value;
+    
+    if (!cartId || !clienteId) {
+        e.preventDefault();
+        alert('Por favor, selecciona un carrito y un cliente');
+        return false;
+    }
+    
+    return confirm('¿Estás seguro de crear esta venta? Esta acción actualizará el inventario y cerrará el carrito.');
+});
+</script>
+{% endblock %}

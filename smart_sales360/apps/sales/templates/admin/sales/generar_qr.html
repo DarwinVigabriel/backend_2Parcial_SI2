@@ -1,0 +1,333 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Generar Código QR - {{ site_title|default:"Django site admin" }}{% endblock %}
+
+{% block extrahead %}
+<style>
+    .form-container {
+        max-width: 700px;
+        margin: 20px auto;
+        padding: 20px;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    .form-group label {
+        display: block;
+        font-weight: bold;
+        margin-bottom: 8px;
+        color: #333;
+    }
+    .form-group select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+    .form-group select:focus {
+        outline: none;
+        border-color: #fd7e14;
+        box-shadow: 0 0 0 3px rgba(253,126,20,0.1);
+    }
+    .form-group .help-text {
+        display: block;
+        margin-top: 5px;
+        font-size: 12px;
+        color: #666;
+    }
+    .venta-preview {
+        margin-top: 20px;
+        padding: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 8px;
+        color: white;
+        text-align: center;
+    }
+    .venta-preview h3 {
+        margin-top: 0;
+        color: white;
+    }
+    .venta-amount {
+        font-size: 48px;
+        font-weight: bold;
+        margin: 20px 0;
+    }
+    .venta-details {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        margin-top: 20px;
+        text-align: left;
+    }
+    .venta-detail-item {
+        padding: 15px;
+        background: rgba(255,255,255,0.2);
+        border-radius: 4px;
+        backdrop-filter: blur(10px);
+    }
+    .venta-detail-item label {
+        display: block;
+        font-size: 12px;
+        opacity: 0.9;
+        margin-bottom: 5px;
+    }
+    .venta-detail-item .value {
+        font-size: 16px;
+        font-weight: bold;
+    }
+    .qr-preview {
+        margin-top: 30px;
+        padding: 30px;
+        background: white;
+        border-radius: 8px;
+        text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .qr-icon {
+        font-size: 80px;
+        margin-bottom: 20px;
+    }
+    .qr-steps {
+        margin-top: 30px;
+        padding: 20px;
+        background: #fff3cd;
+        border: 2px solid #ffc107;
+        border-radius: 8px;
+    }
+    .qr-steps h4 {
+        margin-top: 0;
+        color: #856404;
+    }
+    .qr-step {
+        display: flex;
+        align-items: center;
+        margin: 15px 0;
+        padding: 10px;
+        background: white;
+        border-radius: 4px;
+    }
+    .qr-step-number {
+        width: 30px;
+        height: 30px;
+        background: #fd7e14;
+        color: white;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        margin-right: 15px;
+        flex-shrink: 0;
+    }
+    .btn-submit {
+        background: #fd7e14;
+        color: white;
+        padding: 12px 30px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        margin-top: 20px;
+    }
+    .btn-submit:hover {
+        background: #e8590c;
+    }
+    .btn-cancel {
+        background: #6c757d;
+        color: white;
+        padding: 12px 30px;
+        border: none;
+        border-radius: 4px;
+        font-size: 16px;
+        cursor: pointer;
+        margin-left: 10px;
+        text-decoration: none;
+        display: inline-block;
+    }
+    .btn-cancel:hover {
+        background: #5a6268;
+        color: white;
+    }
+    .alert {
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+    }
+    .alert-warning {
+        background: #fff3cd;
+        border: 1px solid #ffc107;
+        color: #856404;
+    }
+    .features {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 15px;
+        margin-top: 20px;
+    }
+    .feature {
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 4px;
+        border-left: 4px solid #fd7e14;
+    }
+    .feature-icon {
+        font-size: 24px;
+        margin-bottom: 10px;
+    }
+    .feature-title {
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <h1>📱 Generar Código QR para Pago</h1>
+    
+    <div class="alert alert-warning">
+        <strong>🔐 CU13: Procesar Pago - Método QR</strong><br>
+        Genera un código QR único para que el cliente pueda pagar mediante su aplicación móvil. El código incluye toda la información de la venta de forma segura.
+    </div>
+
+    <div class="form-container">
+        <form method="post" id="qrForm">
+            {% csrf_token %}
+            
+            <div class="form-group">
+                <label for="venta_id">Venta para Generar QR:</label>
+                <select name="venta_id" id="venta_id" required onchange="loadVentaPreview()">
+                    <option value="">-- Seleccionar venta --</option>
+                    {% for venta in ventas %}
+                    <option value="{{ venta.id }}" 
+                            data-numero="{{ venta.numero_venta }}"
+                            data-cliente="{{ venta.cliente.nombre_completo }}"
+                            data-total="{{ venta.total }}"
+                            data-fecha="{{ venta.fecha_venta|date:'d/m/Y H:i' }}">
+                        {{ venta.numero_venta }} - 
+                        {{ venta.cliente.nombre_completo }} - 
+                        ${{ venta.total }} - 
+                        {{ venta.fecha_venta|date:"d/m/Y" }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <span class="help-text">Selecciona la venta para generar el código QR de pago</span>
+            </div>
+
+            <div class="venta-preview" id="ventaPreview" style="display: none;">
+                <h3>💳 Información del Pago</h3>
+                <div class="venta-amount">$<span id="ventaTotal">0.00</span></div>
+                <div class="venta-details">
+                    <div class="venta-detail-item">
+                        <label>Número de Venta:</label>
+                        <div class="value" id="ventaNumero">-</div>
+                    </div>
+                    <div class="venta-detail-item">
+                        <label>Cliente:</label>
+                        <div class="value" id="ventaCliente">-</div>
+                    </div>
+                    <div class="venta-detail-item" style="grid-column: 1 / -1;">
+                        <label>Fecha:</label>
+                        <div class="value" id="ventaFecha">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="qr-preview">
+                <div class="qr-icon">📱</div>
+                <h3>Genera el Código QR</h3>
+                <p>El sistema generará un código QR único que el cliente puede escanear con su aplicación de pago móvil.</p>
+            </div>
+
+            <div class="features">
+                <div class="feature">
+                    <div class="feature-icon">🔒</div>
+                    <div class="feature-title">Seguro</div>
+                    <div>Código único e irrepetible</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">⚡</div>
+                    <div class="feature-title">Instantáneo</div>
+                    <div>Pago en segundos</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">📲</div>
+                    <div class="feature-title">Compatible</div>
+                    <div>Todas las apps de pago</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">✅</div>
+                    <div class="feature-title">Verificable</div>
+                    <div>Confirmación automática</div>
+                </div>
+            </div>
+
+            <div class="qr-steps">
+                <h4>📋 Cómo funciona el pago por QR:</h4>
+                <div class="qr-step">
+                    <div class="qr-step-number">1</div>
+                    <div>El sistema genera un código QR único vinculado a la venta</div>
+                </div>
+                <div class="qr-step">
+                    <div class="qr-step-number">2</div>
+                    <div>El cliente escanea el código con su aplicación móvil de pago</div>
+                </div>
+                <div class="qr-step">
+                    <div class="qr-step-number">3</div>
+                    <div>La aplicación muestra el monto y la información de la venta</div>
+                </div>
+                <div class="qr-step">
+                    <div class="qr-step-number">4</div>
+                    <div>El cliente confirma el pago desde su aplicación</div>
+                </div>
+                <div class="qr-step">
+                    <div class="qr-step-number">5</div>
+                    <div>El sistema recibe la confirmación y marca la venta como pagada</div>
+                </div>
+            </div>
+
+            <div style="margin-top: 30px; text-align: center;">
+                <button type="submit" class="btn-submit">📱 Generar Código QR</button>
+                <a href="{% url 'admin:sales_pago_changelist' %}" class="btn-cancel">❌ Cancelar</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function loadVentaPreview() {
+    const ventaSelect = document.getElementById('venta_id');
+    const selectedOption = ventaSelect.options[ventaSelect.selectedIndex];
+    const ventaPreview = document.getElementById('ventaPreview');
+    
+    if (selectedOption.value) {
+        ventaPreview.style.display = 'block';
+        
+        document.getElementById('ventaNumero').textContent = selectedOption.dataset.numero;
+        document.getElementById('ventaCliente').textContent = selectedOption.dataset.cliente;
+        document.getElementById('ventaTotal').textContent = parseFloat(selectedOption.dataset.total).toFixed(2);
+        document.getElementById('ventaFecha').textContent = selectedOption.dataset.fecha;
+    } else {
+        ventaPreview.style.display = 'none';
+    }
+}
+
+// Validación del formulario
+document.getElementById('qrForm').addEventListener('submit', function(e) {
+    const ventaId = document.getElementById('venta_id').value;
+    
+    if (!ventaId) {
+        e.preventDefault();
+        alert('Por favor, selecciona una venta');
+        return false;
+    }
+    
+    return confirm('¿Generar código QR para esta venta?\n\nEl cliente podrá escanear el código con su aplicación móvil para realizar el pago.');
+});
+</script>
+{% endblock %}
