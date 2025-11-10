@@ -5,7 +5,9 @@ from django.utils.html import format_html
 from django.contrib import messages
 from django.db import transaction
 from django.http import HttpResponse
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte
+from django.utils import timezone
+from django.db.models import Sum
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion
 
 
 class CartItemInline(admin.TabularInline):
@@ -1016,4 +1018,250 @@ class ReporteAdmin(admin.ModelAdmin):
             'opts': self.model._meta,
         }
         return render(request, 'admin/sales/generar_reporte.html', context)
+
+
+# ============================================================================
+# CU24: Administración de Prompts Frecuentes
+# ============================================================================
+
+@admin.register(PromptFrecuente)
+class PromptFrecuenteAdmin(admin.ModelAdmin):
+    """Admin para gestionar Prompts Frecuentes (CU24)"""
+    list_display = (
+        'nombre', 'usuario_nombre', 'categoria', 'tipo_reporte', 'formato',
+        'favorito_icon', 'veces_usado', 'activo', 'ultima_utilizacion'
+    )
+    list_filter = ('categoria', 'tipo_reporte', 'formato', 'favorito', 'activo', 'ultima_utilizacion')
+    search_fields = ('nombre', 'descripcion', 'usuario__nombre')
+    readonly_fields = ('veces_usado', 'ultima_utilizacion')
+    
+    fieldsets = (
+        ('Información', {
+            'fields': ('usuario', 'nombre', 'descripcion', 'categoria')
+        }),
+        ('Configuración de Reporte', {
+            'fields': ('tipo_reporte', 'formato', 'filtros', 'opciones')
+        }),
+        ('Uso', {
+            'fields': ('veces_usado', 'ultima_utilizacion', 'favorito', 'activo')
+        }),
+    )
+    
+    actions = ['marcar_como_favorito', 'desmarcar_como_favorito', 'desactivar_prompts']
+    
+    def usuario_nombre(self, obj):
+        return obj.usuario.nombre if hasattr(obj.usuario, 'nombre') else str(obj.usuario)
+    usuario_nombre.short_description = 'Usuario'
+    
+    def favorito_icon(self, obj):
+        if obj.favorito:
+            return format_html('⭐ Sí')
+        return format_html('☆ No')
+    favorito_icon.short_description = 'Favorito'
+    
+    def marcar_como_favorito(self, request, queryset):
+        updated = queryset.update(favorito=True)
+        messages.success(request, f'{updated} prompt(s) marcado(s) como favorito')
+    marcar_como_favorito.short_description = '⭐ Marcar como favorito'
+    
+    def desmarcar_como_favorito(self, request, queryset):
+        updated = queryset.update(favorito=False)
+        messages.success(request, f'{updated} prompt(s) desmarcado(s)')
+    desmarcar_como_favorito.short_description = '☆ Desmarcar como favorito'
+    
+    def desactivar_prompts(self, request, queryset):
+        updated = queryset.update(activo=False)
+        messages.info(request, f'{updated} prompt(s) desactivado(s)')
+    desactivar_prompts.short_description = '❌ Desactivar prompts'
+
+
+# ============================================================================
+# CU26: Administración de Modelos IA
+# ============================================================================
+
+@admin.register(ModeloIA)
+class ModeloIAAdmin(admin.ModelAdmin):
+    """Admin para gestionar Modelos IA (CU26)"""
+    list_display = (
+        'nombre', 'algoritmo', 'estado_badge', 'precision_display',
+        'r_squared_display', 'fecha_entrenamiento', 'creado_por_nombre'
+    )
+    list_filter = ('estado', 'algoritmo', 'variable_objetivo', 'fecha_entrenamiento')
+    search_fields = ('nombre', 'descripcion', 'creado_por__nombre')
+    readonly_fields = (
+        'fecha_entrenamiento', 'datos_entrenamiento', 'precision', 'mae', 'rmse',
+        'r_squared', 'creado_en', 'actualizado_en', 'error_mensaje'
+    )
+    
+    fieldsets = (
+        ('Información General', {
+            'fields': ('nombre', 'descripcion', 'algoritmo', 'variable_objetivo')
+        }),
+        ('Estado', {
+            'fields': ('estado', 'error_mensaje')
+        }),
+        ('Entrenamiento', {
+            'fields': (
+                'fecha_entrenamiento', 'datos_entrenamiento', 'periodo_entrenamiento'
+            )
+        }),
+        ('Métricas', {
+            'fields': ('precision', 'mae', 'rmse', 'r_squared')
+        }),
+        ('Configuración', {
+            'fields': ('parametros', 'archivo_modelo'),
+            'classes': ('collapse',)
+        }),
+        ('Auditoría', {
+            'fields': ('creado_por', 'creado_en', 'actualizado_en'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['entrenar_modelos', 'activar_modelo', 'desactivar_modelos']
+    
+    def estado_badge(self, obj):
+        colores = {
+            'entrenando': '#ffc107',
+            'activo': '#28a745',
+            'inactivo': '#6c757d',
+            'error': '#dc3545',
+            'deprecado': '#17a2b8'
+        }
+        color = colores.get(obj.estado, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 3px;">{}</span>',
+            color, obj.get_estado_display()
+        )
+    estado_badge.short_description = 'Estado'
+    
+    def precision_display(self, obj):
+        if obj.precision > 0:
+            return f'{obj.precision:.2%}'
+        return '-'
+    precision_display.short_description = 'Precisión'
+    
+    def r_squared_display(self, obj):
+        if obj.r_squared > 0:
+            return f'{obj.r_squared:.4f}'
+        return '-'
+    r_squared_display.short_description = 'R²'
+    
+    def creado_por_nombre(self, obj):
+        return obj.creado_por.nombre if obj.creado_por and hasattr(obj.creado_por, 'nombre') else 'N/A'
+    creado_por_nombre.short_description = 'Creado Por'
+    
+    def entrenar_modelos(self, request, queryset):
+        updated = queryset.exclude(estado='entrenando').update(estado='entrenando')
+        messages.info(request, f'{updated} modelo(s) preparado(s) para entrenar')
+    entrenar_modelos.short_description = '🔄 Entrenar modelos'
+    
+    def activar_modelo(self, request, queryset):
+        if queryset.count() == 1:
+            modelo = queryset.first()
+            if modelo.estado == 'activo':
+                # Desactivar otros
+                ModeloIA.objects.filter(estado='activo').exclude(id=modelo.id).update(estado='inactivo')
+                messages.success(request, f'Modelo "{modelo.nombre}" activado')
+            else:
+                messages.error(request, 'El modelo debe estar en estado activo')
+        else:
+            messages.error(request, 'Selecciona un solo modelo para activar')
+    activar_modelo.short_description = '✓ Activar modelo'
+    
+    def desactivar_modelos(self, request, queryset):
+        updated = queryset.filter(estado='activo').update(estado='inactivo')
+        messages.info(request, f'{updated} modelo(s) desactivado(s)')
+    desactivar_modelos.short_description = '✕ Desactivar modelos'
+
+
+# ============================================================================
+# CU25: Administración de Predicciones
+# ============================================================================
+
+@admin.register(Prediccion)
+class PrediccionAdmin(admin.ModelAdmin):
+    """Admin para gestionar Predicciones (CU25)"""
+    list_display = (
+        'id', 'modelo_nombre', 'tipo', 'fecha_inicio_periodo', 'fecha_fin_periodo',
+        'valor_predicho_display', 'valor_real_display', 'error_display', 'fecha_prediccion'
+    )
+    list_filter = ('tipo', 'modelo', 'fecha_inicio_periodo', 'fecha_prediccion')
+    search_fields = ('modelo__nombre', 'variables_utilizadas')
+    readonly_fields = (
+        'fecha_prediccion', 'error_prediccion', 'datos_complementarios_preview'
+    )
+    
+    fieldsets = (
+        ('Información', {
+            'fields': ('modelo', 'tipo', 'fecha_prediccion')
+        }),
+        ('Período', {
+            'fields': ('fecha_inicio_periodo', 'fecha_fin_periodo')
+        }),
+        ('Predicción', {
+            'fields': (
+                'valor_predicho', 'intervalo_confianza_inferior',
+                'intervalo_confianza_superior'
+            )
+        }),
+        ('Valor Real', {
+            'fields': ('valor_real', 'error_prediccion')
+        }),
+        ('Datos Adicionales', {
+            'fields': ('variables_utilizadas', 'datos_complementarios_preview'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['registrar_valor_real']
+    
+    def modelo_nombre(self, obj):
+        return obj.modelo.nombre
+    modelo_nombre.short_description = 'Modelo'
+    
+    def valor_predicho_display(self, obj):
+        return format_html('<strong>${:,.2f}</strong>', obj.valor_predicho)
+    valor_predicho_display.short_description = 'Valor Predicho'
+    
+    def valor_real_display(self, obj):
+        if obj.valor_real:
+            return format_html('<strong>${:,.2f}</strong>', obj.valor_real)
+        return format_html('<span style="color: gray;">Pendiente</span>')
+    valor_real_display.short_description = 'Valor Real'
+    
+    def error_display(self, obj):
+        if obj.error_prediccion is not None:
+            error_pct = (obj.error_prediccion / obj.valor_predicho * 100) if obj.valor_predicho else 0
+            color = 'green' if abs(error_pct) < 10 else 'orange' if abs(error_pct) < 20 else 'red'
+            return format_html(
+                '<span style="color: {};">${:,.2f} ({:.1f}%)</span>',
+                color, obj.error_prediccion, error_pct
+            )
+        return '-'
+    error_display.short_description = 'Error'
+    
+    def datos_complementarios_preview(self, obj):
+        if obj.datos_complementarios:
+            import json
+            datos_str = json.dumps(obj.datos_complementarios, indent=2, ensure_ascii=False)
+            return format_html('<pre style="max-height: 300px; overflow-y: auto;">{}</pre>', datos_str)
+        return '-'
+    datos_complementarios_preview.short_description = 'Datos Complementarios'
+    
+    def registrar_valor_real(self, request, queryset):
+        """Acción para registrar valor real"""
+        for prediccion in queryset:
+            if prediccion.valor_real is None and prediccion.fecha_fin_periodo <= timezone.now().date():
+                # Buscar venta real
+                ventas = Venta.objects.filter(
+                    fecha_venta__date__gte=prediccion.fecha_inicio_periodo,
+                    fecha_venta__date__lte=prediccion.fecha_fin_periodo
+                ).aggregate(total=Sum('total'))
+                
+                prediccion.valor_real = ventas['total'] or 0
+                prediccion.calcular_error()
+        
+        messages.success(request, 'Valores reales registrados')
+    registrar_valor_real.short_description = '📊 Registrar Valor Real'
 

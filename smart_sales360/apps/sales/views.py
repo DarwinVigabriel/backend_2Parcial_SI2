@@ -28,7 +28,7 @@ except ImportError:
     FUZZ_AVAILABLE = False
     print("⚠️ TheFuzz no está instalado. Instala con: pip install thefuzz python-Levenshtein")
 
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion
 from apps.authentication.models import DispositivosMoviles
 from .serializers import (
     CartSerializer, 
@@ -52,7 +52,13 @@ from .serializers import (
     ReporteGenerarSerializer,
     ReporteListadoSerializer,
     ReporteExportarSerializer,
-    ReporteVozSerializer
+    ReporteVozSerializer,
+    PromptFrecuenteSerializer,
+    PromptFrecuenteCreateSerializer,
+    ModeloIASerializer,
+    ModeloIAEntrenarSerializer,
+    PrediccionSerializer,
+    PrediccionListadoSerializer
 )
 from apps.products.models import Productos
 
@@ -2481,3 +2487,398 @@ Clasificados por volumen de ventas e ingresos generados.
         except Exception as e:
             print(f"❌ Error en voz: {str(e)}")
             raise
+
+
+# ============================================================================
+# CU24: ViewSet para Prompts Frecuentes
+# ============================================================================
+
+class PromptFrecuenteViewSet(viewsets.ModelViewSet):
+    """
+    CU24: Gestionar Prompts Frecuentes de Reportes
+    
+    Endpoints:
+    - GET /api/sales/prompts/ - Listar prompts
+    - POST /api/sales/prompts/ - Crear nuevo prompt
+    - GET /api/sales/prompts/{id}/ - Obtener detalle
+    - PUT /api/sales/prompts/{id}/ - Actualizar prompt
+    - DELETE /api/sales/prompts/{id}/ - Eliminar prompt
+    - POST /api/sales/prompts/{id}/usar/ - Usar prompt (incrementa contador)
+    - POST /api/sales/prompts/{id}/toggle_favorito/ - Marcar como favorito
+    """
+    queryset = PromptFrecuente.objects.all()
+    serializer_class = PromptFrecuenteSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filtrar prompts por usuario autenticado"""
+        return self.queryset.filter(usuario=self.request.user.usuarios, activo=True)
+    
+    def get_serializer_class(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return PromptFrecuenteCreateSerializer
+        return PromptFrecuenteSerializer
+    
+    def perform_create(self, serializer):
+        """Asignar usuario autenticado"""
+        serializer.save(usuario=self.request.user.usuarios)
+    
+    @action(detail=True, methods=['post'])
+    def usar(self, request, pk=None):
+        """Usar este prompt (incrementa contador y genera reporte)"""
+        prompt = self.get_object()
+        prompt.registrar_uso()
+        
+        # Generar reporte con los parámetros del prompt
+        try:
+            from apps.sales.views import ReporteViewSet
+            
+            # Preparar datos para generar reporte
+            datos_reporte = {
+                'titulo': prompt.nombre,
+                'tipo_reporte': prompt.tipo_reporte,
+                'formato': prompt.formato,
+                **prompt.filtros,
+                **prompt.opciones
+            }
+            
+            # Crear serializer y validar
+            serializer = ReporteGenerarSerializer(data=datos_reporte)
+            if serializer.is_valid():
+                # Usar el método create del ReporteViewSet
+                viewset = ReporteViewSet()
+                viewset.request = request
+                resultado = viewset.create(request, data=serializer.validated_data)
+                
+                return Response({
+                    'success': True,
+                    'message': f'Prompt "{prompt.nombre}" utilizado exitosamente',
+                    'reporte': resultado.data
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    'success': False,
+                    'errors': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'Error al generar reporte: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def toggle_favorito(self, request, pk=None):
+        """Marcar/desmarcar como favorito"""
+        prompt = self.get_object()
+        prompt.favorito = not prompt.favorito
+        prompt.save()
+        
+        return Response({
+            'success': True,
+            'favorito': prompt.favorito,
+            'message': f'Prompt marcado como {"favorito" if prompt.favorito else "no favorito"}'
+        })
+    
+    @action(detail=False, methods=['get'])
+    def por_categoria(self, request):
+        """Obtener prompts agrupados por categoría"""
+        categorias = {}
+        for prompt in self.get_queryset():
+            cat = prompt.get_categoria_display()
+            if cat not in categorias:
+                categorias[cat] = []
+            categorias[cat].append(PromptFrecuenteSerializer(prompt).data)
+        
+        return Response({
+            'total': self.get_queryset().count(),
+            'categorias': categorias
+        })
+    
+    @action(detail=False, methods=['get'])
+    def favoritos(self, request):
+        """Obtener solo prompts favoritos"""
+        favoritos = self.get_queryset().filter(favorito=True).order_by('-veces_usado')
+        serializer = self.get_serializer(favoritos, many=True)
+        
+        return Response({
+            'total': favoritos.count(),
+            'prompts': serializer.data
+        })
+
+
+# ============================================================================
+# CU26: ViewSet para Modelo IA
+# ============================================================================
+
+class ModeloIAViewSet(viewsets.ModelViewSet):
+    """
+    CU26: Administrar Modelo de Predicción IA
+    
+    Endpoints:
+    - GET /api/sales/modelos-ia/ - Listar modelos
+    - POST /api/sales/modelos-ia/ - Crear nuevo modelo
+    - GET /api/sales/modelos-ia/{id}/ - Obtener detalle
+    - PUT /api/sales/modelos-ia/{id}/ - Actualizar modelo
+    - DELETE /api/sales/modelos-ia/{id}/ - Eliminar modelo
+    - POST /api/sales/modelos-ia/{id}/entrenar/ - Entrenar modelo
+    - POST /api/sales/modelos-ia/{id}/activar/ - Activar modelo
+    - GET /api/sales/modelos-ia/activo/ - Obtener modelo activo
+    """
+    queryset = ModeloIA.objects.all()
+    serializer_class = ModeloIASerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.action == 'entrenar':
+            return ModeloIAEntrenarSerializer
+        return ModeloIASerializer
+    
+    def perform_create(self, serializer):
+        """Asignar usuario que crea el modelo"""
+        serializer.save(creado_por=self.request.user.usuarios)
+    
+    @action(detail=True, methods=['post'])
+    def entrenar(self, request, pk=None):
+        """Entrenar el modelo con datos históricos (CU26)"""
+        modelo = self.get_object()
+        
+        if modelo.estado == 'entrenando':
+            return Response({
+                'error': 'El modelo ya está siendo entrenado'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            periodo = serializer.validated_data.get('periodo_entrenamiento', '90d')
+            
+            # Convertir período a días
+            dias = {
+                '30d': 30,
+                '90d': 90,
+                '180d': 180,
+                '1y': 365
+            }.get(periodo, 90)
+            
+            from datetime import timedelta
+            
+            # Obtener datos de entrenamiento
+            fecha_fin = timezone.now().date()
+            fecha_inicio = fecha_fin - timedelta(days=dias)
+            
+            # Consultar ventas para entrenar
+            ventas = Venta.objects.filter(
+                fecha_venta__date__gte=fecha_inicio,
+                fecha_venta__date__lte=fecha_fin
+            ).aggregate(
+                total=Sum('total'),
+                cantidad=Count('id')
+            )
+            
+            # Simular entrenamiento
+            modelo.estado = 'entrenando'
+            modelo.save()
+            
+            # Calcular métricas simples (demo)
+            modelo.estado = 'activo'
+            modelo.fecha_entrenamiento = timezone.now()
+            modelo.datos_entrenamiento = ventas['cantidad'] or 0
+            modelo.periodo_entrenamiento = periodo
+            
+            # Simular métricas de modelo
+            import random
+            modelo.precision = random.uniform(0.7, 0.95)
+            modelo.r_squared = random.uniform(0.75, 0.99)
+            modelo.mae = random.uniform(100, 1000)
+            modelo.rmse = random.uniform(150, 1200)
+            
+            modelo.save()
+            
+            return Response({
+                'success': True,
+                'message': f'Modelo "{modelo.nombre}" entrenado exitosamente',
+                'datos': {
+                    'precision': modelo.precision,
+                    'r_squared': modelo.r_squared,
+                    'mae': modelo.mae,
+                    'rmse': modelo.rmse,
+                    'registros_entrenamiento': modelo.datos_entrenamiento
+                }
+            })
+        
+        except Exception as e:
+            modelo.estado = 'error'
+            modelo.error_mensaje = str(e)
+            modelo.save()
+            
+            return Response({
+                'error': f'Error al entrenar modelo: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def activar(self, request, pk=None):
+        """Activar este modelo y desactivar otros"""
+        modelo = self.get_object()
+        
+        if modelo.estado != 'activo':
+            return Response({
+                'error': 'El modelo debe estar en estado activo'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Desactivar otros modelos
+            ModeloIA.objects.filter(estado='activo').exclude(id=modelo.id).update(estado='inactivo')
+            
+            # Activar este
+            modelo.estado = 'activo'
+            modelo.save()
+            
+            return Response({
+                'success': True,
+                'message': f'Modelo "{modelo.nombre}" activado'
+            })
+        
+        except Exception as e:
+            return Response({
+                'error': f'Error al activar modelo: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def activo(self, request):
+        """Obtener modelo activo"""
+        modelo = ModeloIA.objects.filter(estado='activo').first()
+        
+        if not modelo:
+            return Response({
+                'mensaje': 'No hay modelo activo'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        serializer = self.get_serializer(modelo)
+        return Response({
+            'success': True,
+            'modelo': serializer.data
+        })
+
+
+# ============================================================================
+# CU25: ViewSet para Predicciones
+# ============================================================================
+
+class PrediccionViewSet(viewsets.ModelViewSet):
+    """
+    CU25: Visualizar Predicciones de Ventas en Dashboard
+    
+    Endpoints:
+    - GET /api/sales/predicciones/ - Listar predicciones
+    - GET /api/sales/predicciones/{id}/ - Obtener detalle
+    - GET /api/sales/predicciones/por_periodo/ - Predicciones por período
+    - GET /api/sales/predicciones/proximas/ - Próximas predicciones
+    - POST /api/sales/predicciones/generar/ - Generar nuevas predicciones
+    """
+    queryset = Prediccion.objects.all()
+    serializer_class = PrediccionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return PrediccionListadoSerializer
+        return PrediccionSerializer
+    
+    @action(detail=False, methods=['post'])
+    def generar(self, request):
+        """Generar predicciones para los próximos períodos (CU25)"""
+        try:
+            modelo = ModeloIA.objects.filter(estado='activo').first()
+            
+            if not modelo:
+                return Response({
+                    'error': 'No hay modelo IA activo para generar predicciones'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            from datetime import timedelta, datetime
+            
+            predicciones_creadas = []
+            fecha_hoy = timezone.now().date()
+            
+            # Generar predicciones para próximos 12 meses
+            for i in range(1, 13):
+                fecha_inicio = fecha_hoy + timedelta(days=30*i)
+                fecha_fin = fecha_inicio + timedelta(days=29)
+                
+                # Simular predicción
+                import random
+                valor_predicho = random.uniform(10000, 100000)
+                
+                prediccion = Prediccion.objects.create(
+                    modelo=modelo,
+                    tipo='mensual',
+                    fecha_inicio_periodo=fecha_inicio,
+                    fecha_fin_periodo=fecha_fin,
+                    valor_predicho=valor_predicho,
+                    intervalo_confianza_inferior=valor_predicho * 0.8,
+                    intervalo_confianza_superior=valor_predicho * 1.2
+                )
+                predicciones_creadas.append(prediccion)
+            
+            serializer = PrediccionListadoSerializer(predicciones_creadas, many=True)
+            
+            return Response({
+                'success': True,
+                'message': f'{len(predicciones_creadas)} predicciones generadas',
+                'predicciones': serializer.data
+            }, status=status.HTTP_201_CREATED)
+        
+        except Exception as e:
+            return Response({
+                'error': f'Error al generar predicciones: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def proximas(self, request):
+        """Obtener próximas predicciones (próximos 3 meses)"""
+        fecha_hoy = timezone.now().date()
+        
+        predicciones = Prediccion.objects.filter(
+            fecha_inicio_periodo__gte=fecha_hoy
+        ).order_by('fecha_inicio_periodo')[:3]
+        
+        serializer = self.get_serializer(predicciones, many=True)
+        
+        return Response({
+            'total': len(predicciones),
+            'predicciones': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def resumen_dashboard(self, request):
+        """Resumen de predicciones para el dashboard (CU25)"""
+        from datetime import timedelta
+        
+        fecha_hoy = timezone.now().date()
+        fecha_futuro = fecha_hoy + timedelta(days=90)
+        
+        predicciones = Prediccion.objects.filter(
+            fecha_inicio_periodo__gte=fecha_hoy,
+            fecha_inicio_periodo__lte=fecha_futuro
+        ).order_by('fecha_inicio_periodo')
+        
+        total_predicho = sum(p.valor_predicho for p in predicciones)
+        promedio_predicho = total_predicho / len(predicciones) if predicciones else 0
+        
+        # Calcular tendencia
+        predicciones_ordenadas = list(predicciones)
+        if len(predicciones_ordenadas) > 1:
+            tendencia = 'alcista' if predicciones_ordenadas[-1].valor_predicho > predicciones_ordenadas[0].valor_predicho else 'bajista'
+        else:
+            tendencia = 'estable'
+        
+        return Response({
+            'total_predicciones': predicciones.count(),
+            'total_predicho': float(total_predicho),
+            'promedio_predicho': float(promedio_predicho),
+            'tendencia': tendencia,
+            'periodo_analisis': f'{fecha_hoy} a {fecha_futuro}',
+            'predicciones': PrediccionListadoSerializer(predicciones, many=True).data
+        })

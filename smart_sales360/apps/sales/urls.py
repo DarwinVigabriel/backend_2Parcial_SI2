@@ -3,7 +3,7 @@ from .views import (
     CartViewSet, CartItemViewSet, VentaViewSet, PagoViewSet,
     VentaComprobantePDFViewSet, VentaHistoricoViewSet, VentaDashboardViewSet,
     DispositivoMovilViewSet, VentaMovilViewSet, NotificacionPushViewSet,
-    ReporteViewSet
+    ReporteViewSet, PromptFrecuenteViewSet, ModeloIAViewSet, PrediccionViewSet
 )
 
 router = DefaultRouter()
@@ -21,5 +21,10 @@ router.register(r'ventas-movil', VentaMovilViewSet, basename='ventas-movil')
 router.register(r'notificaciones', NotificacionPushViewSet, basename='notificaciones')
 # CU21-23: Reportes dinámicos
 router.register(r'reportes', ReporteViewSet, basename='reportes')
+# CU24: Prompts frecuentes
+router.register(r'prompts', PromptFrecuenteViewSet, basename='prompts')
+# CU25-26: Predicciones e IA
+router.register(r'modelos-ia', ModeloIAViewSet, basename='modelos-ia')
+router.register(r'predicciones', PrediccionViewSet, basename='predicciones')
 
 urlpatterns = router.urls

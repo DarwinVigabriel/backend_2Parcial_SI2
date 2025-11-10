@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion
 from apps.authentication.models import DispositivosMoviles
 from apps.products.serializers import ProductoSerializer
 from apps.products.models import Productos
@@ -770,3 +770,106 @@ class ReporteVozSerializer(serializers.Serializer):
         default=False,
         help_text="Forzar regeneración del audio si ya existe"
     )
+
+
+# ============================================================================
+# CU24: Serializers para Prompts Frecuentes
+# ============================================================================
+
+class PromptFrecuenteSerializer(serializers.ModelSerializer):
+    """Serializer completo para Prompts Frecuentes (CU24)"""
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    categoria_display = serializers.CharField(source='get_categoria_display', read_only=True)
+    tipo_reporte_display = serializers.CharField(source='get_tipo_reporte_display', read_only=True)
+    formato_display = serializers.CharField(source='get_formato_display', read_only=True)
+    
+    class Meta:
+        model = PromptFrecuente
+        fields = [
+            'id', 'usuario', 'usuario_nombre', 'nombre', 'descripcion', 'categoria',
+            'categoria_display', 'tipo_reporte', 'tipo_reporte_display', 'formato',
+            'formato_display', 'filtros', 'opciones', 'veces_usado', 'ultima_utilizacion',
+            'activo', 'favorito', 'created_at'
+        ]
+        read_only_fields = [
+            'id', 'usuario_nombre', 'veces_usado', 'ultima_utilizacion', 'created_at'
+        ]
+
+
+class PromptFrecuenteCreateSerializer(serializers.ModelSerializer):
+    """Serializer para crear/actualizar prompts frecuentes"""
+    class Meta:
+        model = PromptFrecuente
+        fields = [
+            'nombre', 'descripcion', 'categoria', 'tipo_reporte', 'formato',
+            'filtros', 'opciones', 'activo', 'favorito'
+        ]
+
+
+# ============================================================================
+# CU26: Serializers para Modelo IA
+# ============================================================================
+
+class ModeloIASerializer(serializers.ModelSerializer):
+    """Serializer para Modelos IA (CU26)"""
+    creado_por_nombre = serializers.CharField(source='creado_por.nombre', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    algoritmo_display = serializers.CharField(source='get_algoritmo_display', read_only=True)
+    variable_objetivo_display = serializers.CharField(source='get_variable_objetivo_display', read_only=True)
+    
+    class Meta:
+        model = ModeloIA
+        fields = [
+            'id', 'nombre', 'descripcion', 'algoritmo', 'algoritmo_display',
+            'variable_objetivo', 'variable_objetivo_display', 'estado', 'estado_display',
+            'fecha_entrenamiento', 'datos_entrenamiento', 'periodo_entrenamiento',
+            'precision', 'mae', 'rmse', 'r_squared', 'parametros', 'error_mensaje',
+            'creado_por', 'creado_por_nombre', 'creado_en', 'actualizado_en'
+        ]
+        read_only_fields = [
+            'id', 'fecha_entrenamiento', 'datos_entrenamiento', 'precision', 'mae',
+            'rmse', 'r_squared', 'error_mensaje', 'creado_por_nombre', 'creado_en', 'actualizado_en'
+        ]
+
+
+class ModeloIAEntrenarSerializer(serializers.Serializer):
+    """Serializer para entrenar un modelo (CU26)"""
+    periodo_entrenamiento = serializers.ChoiceField(
+        choices=[('30d', 'Últimos 30 días'), ('90d', 'Últimos 90 días'), ('180d', 'Últimos 180 días'), ('1y', 'Último año')],
+        default='90d'
+    )
+    parametros_custom = serializers.JSONField(required=False, help_text="Parámetros personalizados")
+
+
+# ============================================================================
+# CU25: Serializers para Predicciones
+# ============================================================================
+
+class PrediccionSerializer(serializers.ModelSerializer):
+    """Serializer para Predicciones (CU25)"""
+    modelo_nombre = serializers.CharField(source='modelo.nombre', read_only=True)
+    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
+    
+    class Meta:
+        model = Prediccion
+        fields = [
+            'id', 'modelo', 'modelo_nombre', 'tipo', 'tipo_display',
+            'fecha_prediccion', 'fecha_inicio_periodo', 'fecha_fin_periodo',
+            'valor_predicho', 'intervalo_confianza_inferior', 'intervalo_confianza_superior',
+            'valor_real', 'error_prediccion', 'variables_utilizadas', 'datos_complementarios'
+        ]
+        read_only_fields = [
+            'id', 'modelo_nombre', 'fecha_prediccion', 'error_prediccion'
+        ]
+
+
+class PrediccionListadoSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para listar predicciones"""
+    modelo_nombre = serializers.CharField(source='modelo.nombre', read_only=True)
+    
+    class Meta:
+        model = Prediccion
+        fields = [
+            'id', 'modelo', 'modelo_nombre', 'tipo', 'fecha_inicio_periodo',
+            'fecha_fin_periodo', 'valor_predicho', 'valor_real', 'error_prediccion'
+        ]

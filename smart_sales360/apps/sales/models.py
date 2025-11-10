@@ -628,3 +628,222 @@ class Reporte(models.Model):
         elif self.formato == 'csv':
             return self.archivo_csv
         return None
+
+
+# ============================================================================
+# CU24: Gestionar Prompts Frecuentes de Reportes
+# ============================================================================
+
+class PromptFrecuente(models.Model):
+    """
+    CU24: Almacena prompts frecuentes para generar reportes rápidamente
+    Permite guardar configuraciones de reporte usadas frecuentemente
+    """
+    CATEGORIA_CHOICES = [
+        ('ventas', 'Ventas'),
+        ('productos', 'Productos'),
+        ('clientes', 'Clientes'),
+        ('estadisticas', 'Estadísticas'),
+        ('analisis', 'Análisis'),
+        ('prediccion', 'Predicción'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.ForeignKey('authentication.Usuarios', models.CASCADE, related_name='prompts_frecuentes')
+    
+    # Información del prompt
+    nombre = models.CharField(max_length=255, help_text="Nombre del prompt frecuente")
+    descripcion = models.TextField(blank=True, help_text="Descripción de qué hace este prompt")
+    categoria = models.CharField(max_length=50, choices=CATEGORIA_CHOICES, default='ventas')
+    
+    # Configuración del reporte
+    tipo_reporte = models.CharField(max_length=50, choices=Reporte.TIPO_REPORTE_CHOICES)
+    formato = models.CharField(max_length=10, choices=Reporte.FORMATO_CHOICES, default='pdf')
+    filtros = models.JSONField(default=dict, help_text="Filtros predefinidos")
+    opciones = models.JSONField(default=dict, blank=True, help_text="Opciones adicionales (incluir_voz, agrupar_por, etc)")
+    
+    # Uso
+    veces_usado = models.IntegerField(default=0, help_text="Cantidad de veces utilizado")
+    ultima_utilizacion = models.DateTimeField(blank=True, null=True)
+    
+    # Estado
+    activo = models.BooleanField(default=True)
+    favorito = models.BooleanField(default=False)
+    
+    class Meta:
+        managed = True
+        db_table = 'prompts_frecuentes'
+        ordering = ['-favorito', '-veces_usado', '-ultima_utilizacion']
+        verbose_name = 'Prompt Frecuente'
+        verbose_name_plural = 'Prompts Frecuentes'
+        indexes = [
+            models.Index(fields=['usuario', 'activo']),
+            models.Index(fields=['categoria']),
+        ]
+    
+    def __str__(self):
+        return f"{self.nombre} - {self.usuario.nombre if hasattr(self.usuario, 'nombre') else self.usuario}"
+    
+    def registrar_uso(self):
+        """Registra que se utilizó este prompt"""
+        self.veces_usado += 1
+        self.ultima_utilizacion = timezone.now()
+        self.save()
+
+
+# ============================================================================
+# CU25, CU26: Predicciones de Ventas y Modelo IA
+# ============================================================================
+
+class ModeloIA(models.Model):
+    """
+    CU26: Almacena información del modelo de IA entrenado para predicciones
+    Permite gestionar múltiples versiones de modelos
+    """
+    ESTADO_CHOICES = [
+        ('entrenando', 'Entrenando'),
+        ('activo', 'Activo'),
+        ('inactivo', 'Inactivo'),
+        ('error', 'Error'),
+        ('deprecado', 'Deprecado'),
+    ]
+    
+    ALGORITMO_CHOICES = [
+        ('linear_regression', 'Regresión Lineal'),
+        ('arima', 'ARIMA'),
+        ('exponential_smoothing', 'Suavización Exponencial'),
+        ('prophet', 'Prophet'),
+        ('random_forest', 'Random Forest'),
+        ('neural_network', 'Red Neuronal'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    nombre = models.CharField(max_length=255, help_text="Nombre del modelo")
+    descripcion = models.TextField(blank=True)
+    
+    # Configuración
+    algoritmo = models.CharField(max_length=50, choices=ALGORITMO_CHOICES, default='linear_regression')
+    variable_objetivo = models.CharField(
+        max_length=50, 
+        choices=[('ventas', 'Ventas'), ('cantidad_transacciones', 'Cantidad de Transacciones')],
+        default='ventas'
+    )
+    
+    # Estado de entrenamiento
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='inactivo')
+    
+    # Datos de entrenamiento
+    fecha_entrenamiento = models.DateTimeField(blank=True, null=True, help_text="Cuándo se entrenó el modelo")
+    datos_entrenamiento = models.IntegerField(default=0, help_text="Cantidad de registros usados para entrenar")
+    periodo_entrenamiento = models.CharField(
+        max_length=20,
+        choices=[('30d', 'Últimos 30 días'), ('90d', 'Últimos 90 días'), ('180d', 'Últimos 180 días'), ('1y', 'Último año')],
+        default='90d'
+    )
+    
+    # Métricas del modelo
+    precision = models.FloatField(default=0.0, help_text="Precisión del modelo (0-1)")
+    mae = models.FloatField(default=0.0, help_text="Mean Absolute Error")
+    rmse = models.FloatField(default=0.0, help_text="Root Mean Squared Error")
+    r_squared = models.FloatField(default=0.0, help_text="Coeficiente de determinación (R²)")
+    
+    # Archivo del modelo
+    archivo_modelo = models.FileField(
+        upload_to='modelos_ia/',
+        blank=True,
+        null=True,
+        help_text="Archivo pickle o joblib del modelo"
+    )
+    
+    # Configuración
+    parametros = models.JSONField(default=dict, blank=True, help_text="Parámetros del modelo")
+    error_mensaje = models.TextField(blank=True, null=True)
+    
+    # Usuario responsable
+    creado_por = models.ForeignKey('authentication.Usuarios', models.SET_NULL, null=True, related_name='modelos_ia_creados')
+    
+    # Auditoría
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        managed = True
+        db_table = 'modelos_ia'
+        ordering = ['-fecha_entrenamiento']
+        verbose_name = 'Modelo IA'
+        verbose_name_plural = 'Modelos IA'
+    
+    def __str__(self):
+        return f"{self.nombre} - {self.get_estado_display()}"
+    
+    def es_activo(self):
+        """Verifica si el modelo está activo"""
+        return self.estado == 'activo'
+
+
+class Prediccion(models.Model):
+    """
+    CU25: Almacena predicciones generadas por el modelo de IA
+    """
+    TIPO_PREDICCION_CHOICES = [
+        ('diaria', 'Predicción Diaria'),
+        ('semanal', 'Predicción Semanal'),
+        ('mensual', 'Predicción Mensual'),
+        ('trimestral', 'Predicción Trimestral'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    modelo = models.ForeignKey(ModeloIA, models.CASCADE, related_name='predicciones')
+    
+    # Información de la predicción
+    tipo = models.CharField(max_length=50, choices=TIPO_PREDICCION_CHOICES, default='diaria')
+    fecha_prediccion = models.DateTimeField(auto_now_add=True, help_text="Cuándo se generó la predicción")
+    fecha_inicio_periodo = models.DateField(help_text="Fecha de inicio del período predicho")
+    fecha_fin_periodo = models.DateField(help_text="Fecha de fin del período predicho")
+    
+    # Valor predicho
+    valor_predicho = models.DecimalField(max_digits=15, decimal_places=2, help_text="Valor predicho")
+    intervalo_confianza_inferior = models.DecimalField(
+        max_digits=15, decimal_places=2, blank=True, null=True,
+        help_text="Límite inferior del intervalo de confianza"
+    )
+    intervalo_confianza_superior = models.DecimalField(
+        max_digits=15, decimal_places=2, blank=True, null=True,
+        help_text="Límite superior del intervalo de confianza"
+    )
+    
+    # Valor real (si se ha completado el período)
+    valor_real = models.DecimalField(
+        max_digits=15, decimal_places=2, blank=True, null=True,
+        help_text="Valor real del período (cuando se complete)"
+    )
+    error_prediccion = models.DecimalField(
+        max_digits=15, decimal_places=2, blank=True, null=True,
+        help_text="Error de predicción (real - predicho)"
+    )
+    
+    # Datos adicionales
+    variables_utilizadas = models.JSONField(default=dict, blank=True)
+    datos_complementarios = models.JSONField(default=dict, blank=True)
+    
+    class Meta:
+        managed = True
+        db_table = 'predicciones'
+        ordering = ['-fecha_prediccion']
+        verbose_name = 'Predicción'
+        verbose_name_plural = 'Predicciones'
+        indexes = [
+            models.Index(fields=['modelo', '-fecha_prediccion']),
+            models.Index(fields=['fecha_inicio_periodo', 'fecha_fin_periodo']),
+        ]
+    
+    def __str__(self):
+        return f"Predicción {self.tipo} - {self.fecha_inicio_periodo} a {self.fecha_fin_periodo}"
+    
+    def calcular_error(self):
+        """Calcula el error si ya se conoce el valor real"""
+        if self.valor_real is not None:
+            self.error_prediccion = self.valor_real - self.valor_predicho
+            self.save()
+            return self.error_prediccion
+        return None
