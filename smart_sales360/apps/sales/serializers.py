@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush
+from apps.authentication.models import DispositivosMoviles
 from apps.products.serializers import ProductoSerializer
 from apps.products.models import Productos
 from apps.clients.models import Clientes
@@ -458,6 +459,7 @@ class EstadisticasVentasSerializer(serializers.Serializer):
     ventas_transferencia = serializers.IntegerField()
     ventas_otros = serializers.IntegerField()
     
+    
     # Top productos
     top_productos = serializers.ListField()
     
@@ -465,3 +467,138 @@ class EstadisticasVentasSerializer(serializers.Serializer):
     periodo = serializers.CharField()
     fecha_inicio = serializers.DateTimeField()
     fecha_fin = serializers.DateTimeField()
+
+
+# CU17-19: Serializers para móvil
+class DispositivoMovilSerializer(serializers.ModelSerializer):
+    """Serializer para dispositivos móviles"""
+    class Meta:
+        model = DispositivosMoviles
+        fields = [
+            'id', 'usuario', 'device_id', 'device_token', 'plataforma',
+            'modelo_dispositivo', 'os_version', 'activo', 'app_version',
+            'last_activity', 'idioma', 'timezone', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class VentaMovilSerializer(serializers.ModelSerializer):
+    """
+    CU17: Serializer para crear ventas desde dispositivos móviles
+    Versión simplificada con campos esenciales
+    """
+    detalles = VentaDetalleSerializer(many=True, read_only=True)
+    cliente_nombre = serializers.CharField(source='cliente.nombre_completo', read_only=True)
+    
+    class Meta:
+        model = Venta
+        fields = [
+            'id', 'codigo_venta', 'cliente', 'cliente_nombre', 'usuario',
+            'subtotal', 'descuento', 'iva', 'total', 'estado', 'metodo_pago',
+            'tipo_entrega', 'direccion_entrega', 'notas', 'fecha_venta',
+            'detalles', 'created_at'
+        ]
+        read_only_fields = ['id', 'codigo_venta', 'created_at', 'fecha_venta']
+
+
+class VentaCreateMovilSerializer(serializers.ModelSerializer):
+    """
+    CU17: Serializer para crear ventas desde móvil
+    """
+    detalles_datos = serializers.ListField(
+        child=serializers.DictField(),
+        write_only=True,
+        help_text="Array de {producto_id, cantidad, precio}"
+    )
+    
+    class Meta:
+        model = Venta
+        fields = [
+            'cliente', 'usuario', 'subtotal', 'descuento', 'iva', 'total',
+            'estado', 'metodo_pago', 'transaccion_id', 'tipo_entrega',
+            'direccion_entrega', 'notas', 'detalles_datos'
+        ]
+    
+    def create(self, validated_data):
+        detalles_datos = validated_data.pop('detalles_datos', [])
+        venta = Venta.objects.create(**validated_data)
+        
+        # Crear detalles de venta
+        for detalle_data in detalles_datos:
+            VentaDetalle.objects.create(venta=venta, **detalle_data)
+        
+        return venta
+
+
+class VentaHistoricoMovilSerializer(serializers.ModelSerializer):
+    """
+    CU18: Serializer para historial de compras (versión mobile)
+    """
+    cliente_nombre = serializers.CharField(source='cliente.nombre_completo', read_only=True)
+    detalles_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Venta
+        fields = [
+            'id', 'codigo_venta', 'cliente', 'cliente_nombre', 'total',
+            'estado', 'metodo_pago', 'tipo_entrega', 'fecha_venta',
+            'detalles_count', 'created_at'
+        ]
+        read_only_fields = fields
+    
+    def get_detalles_count(self, obj):
+        return obj.detalles.count()
+
+
+class DashboardMovilSerializer(serializers.Serializer):
+    """
+    CU19: Serializer para Dashboard resumido en móvil
+    """
+    # Resumen rápido
+    total_vendido = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_ventas = serializers.IntegerField()
+    promedio_venta = serializers.DecimalField(max_digits=12, decimal_places=2)
+    
+    # Últimas ventas
+    ultimas_ventas = VentaHistoricoMovilSerializer(many=True)
+    
+    # Estadísticas rápidas
+    ventas_pendientes = serializers.IntegerField()
+    ventas_pagadas = serializers.IntegerField()
+    ventas_en_proceso = serializers.IntegerField()
+    
+    # Alertas
+    alertas = serializers.ListField(child=serializers.DictField())
+
+
+class NotificacionPushSerializer(serializers.ModelSerializer):
+    """
+    CU20: Serializer para notificaciones push
+    """
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    cliente_nombre = serializers.CharField(source='cliente.nombre_completo', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = NotificacionPush
+        fields = [
+            'id', 'usuario', 'usuario_nombre', 'cliente', 'cliente_nombre',
+            'venta', 'titulo', 'mensaje', 'tipo', 'estado', 'datos_adicionales',
+            'fecha_envio', 'fecha_entrega', 'intentos', 'error_mensaje',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'fecha_envio', 'fecha_entrega', 'intentos', 'error_mensaje',
+            'created_at', 'updated_at', 'usuario_nombre', 'cliente_nombre'
+        ]
+
+
+class NotificacionPushCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer para crear notificaciones push
+    """
+    class Meta:
+        model = NotificacionPush
+        fields = [
+            'usuario', 'cliente', 'venta', 'titulo', 'mensaje', 'tipo',
+            'datos_adicionales'
+        ]

@@ -5,7 +5,7 @@ from django.utils.html import format_html
 from django.contrib import messages
 from django.db import transaction
 from django.http import HttpResponse
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush
 
 
 class CartItemInline(admin.TabularInline):
@@ -732,3 +732,56 @@ class PagoAdmin(admin.ModelAdmin):
             'opts': self.model._meta,
         }
         return render(request, 'admin/sales/generar_qr.html', context)
+
+
+# CU20: Administración de Notificaciones Push
+@admin.register(NotificacionPush)
+class NotificacionPushAdmin(admin.ModelAdmin):
+    """Admin para gestionar notificaciones push"""
+    list_display = ('titulo', 'usuario_link', 'tipo', 'estado', 'intentos', 'created_at')
+    list_filter = ('tipo', 'estado', 'created_at', 'fecha_envio')
+    search_fields = ('titulo', 'mensaje', 'usuario__nombre', 'cliente__nombre_completo')
+    readonly_fields = ('id', 'fecha_envio', 'fecha_entrega', 'intentos', 'error_mensaje', 'created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Destinatario', {
+            'fields': ('usuario', 'cliente', 'venta')
+        }),
+        ('Contenido', {
+            'fields': ('titulo', 'mensaje', 'tipo', 'datos_adicionales')
+        }),
+        ('Estado de Entrega', {
+            'fields': ('estado', 'fecha_envio', 'fecha_entrega', 'intentos', 'error_mensaje')
+        }),
+        ('Auditoría', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['marcar_como_enviada', 'marcar_como_entregada', 'reintentar_envio']
+    
+    def usuario_link(self, obj):
+        if obj.usuario:
+            return obj.usuario.nombre if hasattr(obj.usuario, 'nombre') else str(obj.usuario)
+        return '-'
+    usuario_link.short_description = 'Usuario'
+    
+    def marcar_como_enviada(self, request, queryset):
+        updated = queryset.update(estado='enviada')
+        messages.info(request, f'{updated} notificación(es) marcada(s) como enviada(s).')
+    marcar_como_enviada.short_description = '📤 Marcar como enviada'
+    
+    def marcar_como_entregada(self, request, queryset):
+        updated = 0
+        for notif in queryset:
+            notif.marcar_entregada()
+            updated += 1
+        messages.success(request, f'{updated} notificación(es) marcada(s) como entregada(s).')
+    marcar_como_entregada.short_description = '✓ Marcar como entregada'
+    
+    def reintentar_envio(self, request, queryset):
+        updated = queryset.filter(estado='fallida').update(estado='pendiente', intentos=0)
+        messages.info(request, f'{updated} notificación(es) preparada(s) para reintentar.')
+    reintentar_envio.short_description = '🔄 Reintentar envío'
+

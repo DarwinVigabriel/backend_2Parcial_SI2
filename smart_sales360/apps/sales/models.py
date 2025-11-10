@@ -437,6 +437,81 @@ class Pago(models.Model):
             self.notas = f"Error procesando pago: {str(e)}"
         
         self.save()
-
-        self.save()
         return self.estado == 'completado'
+
+
+class NotificacionPush(models.Model):
+    """
+    CU20: Gestionar Notificaciones Push
+    Modelo para almacenar notificaciones push del sistema (Tabla adicional con más detalles que Notificaciones)
+    """
+    TIPO_CHOICES = [
+        ('venta', 'Venta Completada'),
+        ('pago', 'Pago Recibido'),
+        ('compra', 'Compra Realizada'),
+        ('descuento', 'Descuento Disponible'),
+        ('promocion', 'Promoción'),
+        ('alerta', 'Alerta del Sistema'),
+        ('otro', 'Otro'),
+    ]
+    
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('enviada', 'Enviada'),
+        ('entregada', 'Entregada'),
+        ('fallida', 'Fallida'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.ForeignKey('authentication.Usuarios', models.CASCADE, related_name='notificaciones_push_sales')
+    cliente = models.ForeignKey('clients.Clientes', models.SET_NULL, null=True, blank=True, related_name='notificaciones_push')
+    venta = models.ForeignKey('sales.Venta', models.SET_NULL, null=True, blank=True, related_name='notificaciones_push', help_text="Venta relacionada a la notificación")
+    
+    titulo = models.CharField(max_length=150)
+    mensaje = models.TextField()
+    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES, default='otro')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    
+    # Datos adicionales (JSON)
+    datos_adicionales = models.JSONField(default=dict, blank=True, help_text="Datos personalizados de la notificación")
+    
+    # Control de entrega
+    fecha_envio = models.DateTimeField(null=True, blank=True)
+    fecha_entrega = models.DateTimeField(null=True, blank=True)
+    intentos = models.IntegerField(default=0)
+    error_mensaje = models.TextField(blank=True, null=True)
+    
+    # Registro
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        managed = True
+        db_table = 'notificaciones_push_sales'
+        ordering = ['-created_at']
+        verbose_name = 'Notificación Push Ventas'
+        verbose_name_plural = 'Notificaciones Push Ventas'
+    
+    def __str__(self):
+        usuario_nombre = self.usuario.nombre if hasattr(self.usuario, 'nombre') else str(self.usuario)
+        return f"{self.titulo} - {usuario_nombre} ({self.estado})"
+    
+    def marcar_enviada(self):
+        """Marca la notificación como enviada"""
+        self.estado = 'enviada'
+        self.fecha_envio = timezone.now()
+        self.save()
+    
+    def marcar_entregada(self):
+        """Marca la notificación como entregada"""
+        self.estado = 'entregada'
+        self.fecha_entrega = timezone.now()
+        self.save()
+    
+    def registrar_error(self, error_msg):
+        """Registra un error en el envío"""
+        self.intentos += 1
+        self.error_mensaje = error_msg
+        if self.intentos >= 3:
+            self.estado = 'fallida'
+        self.save()

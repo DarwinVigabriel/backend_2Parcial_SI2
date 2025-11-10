@@ -28,7 +28,8 @@ except ImportError:
     FUZZ_AVAILABLE = False
     print("⚠️ TheFuzz no está instalado. Instala con: pip install thefuzz python-Levenshtein")
 
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush
+from apps.authentication.models import DispositivosMoviles
 from .serializers import (
     CartSerializer, 
     CartItemSerializer, 
@@ -39,7 +40,14 @@ from .serializers import (
     VentaDetalleSerializer,
     PagoSerializer,
     PagoCreateSerializer,
-    PagoQRSerializer
+    PagoQRSerializer,
+    DispositivoMovilSerializer,
+    VentaMovilSerializer,
+    VentaCreateMovilSerializer,
+    VentaHistoricoMovilSerializer,
+    DashboardMovilSerializer,
+    NotificacionPushSerializer,
+    NotificacionPushCreateSerializer
 )
 from apps.products.models import Productos
 
@@ -1642,3 +1650,330 @@ class VentaDashboardViewSet(viewsets.ViewSet):
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
 
+
+# CU17-19: ViewSets para móvil
+class DispositivoMovilViewSet(viewsets.ModelViewSet):
+    """
+    CU17-19: API para gestionar dispositivos móviles
+    Permite registrar, actualizar y listar dispositivos móviles
+    """
+    queryset = DispositivosMoviles.objects.all()
+    serializer_class = DispositivoMovilSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filtrar dispositivos del usuario autenticado"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return DispositivosMoviles.objects.all()
+        # Filtrar por usuario autenticado
+        return DispositivosMoviles.objects.filter(usuario__user=self.request.user)
+    
+    def perform_create(self, serializer):
+        """Asignar el usuario autenticado al crear dispositivo"""
+        try:
+            usuario = self.request.user.usuarios
+        except:
+            return Response(
+                {'detail': 'Usuario no tiene perfil de Usuario'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        serializer.save(usuario=usuario)
+    
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def registrar_acceso(self, request, pk=None):
+        """
+        Registra el último acceso del dispositivo
+        POST /api/sales/dispositivos/{id}/registrar_acceso/
+        """
+        dispositivo = self.get_object()
+        ip_address = request.META.get('REMOTE_ADDR')
+        dispositivo.last_activity = timezone.now()
+        if ip_address:
+            dispositivo.ip_address = ip_address
+        dispositivo.save()
+        
+        return Response({
+            'success': True,
+            'message': 'Acceso registrado',
+            'ultimo_acceso': dispositivo.last_activity
+        })
+
+
+class VentaMovilViewSet(viewsets.ModelViewSet):
+    """
+    CU17: API para crear y gestionar ventas desde dispositivos móviles
+    """
+    serializer_class = VentaMovilSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filtrar ventas del usuario o cliente autenticado"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return Venta.objects.all()
+        # Filtrar ventas del usuario
+        return Venta.objects.filter(usuario__user=self.request.user)
+    
+    def get_serializer_class(self):
+        """Usar serializer diferente según la acción"""
+        if self.action == 'create':
+            return VentaCreateMovilSerializer
+        elif self.action == 'historial':
+            return VentaHistoricoMovilSerializer
+        return VentaMovilSerializer
+    
+    def create(self, request, *args, **kwargs):
+        """
+        CU17: Crear venta desde dispositivo móvil
+        POST /api/sales/ventas-movil/
+        """
+        try:
+            usuario = request.user.usuarios
+        except:
+            return Response(
+                {'detail': 'Usuario no tiene perfil de Usuario'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.validated_data['usuario'] = usuario
+        
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        
+        return Response(
+            {
+                'success': True,
+                'message': 'Venta creada exitosamente',
+                'data': VentaMovilSerializer(serializer.instance).data
+            },
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+    
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def historial(self, request):
+        """
+        CU18: Obtener historial de compras del usuario
+        GET /api/sales/ventas-movil/historial/
+        """
+        try:
+            usuario = request.user.usuarios
+            ventas = Venta.objects.filter(usuario=usuario).order_by('-fecha_venta')
+            
+            # Filtrar por estado si se proporciona
+            estado = request.query_params.get('estado')
+            if estado:
+                ventas = ventas.filter(estado=estado)
+            
+            # Filtrar por fecha si se proporcionan
+            fecha_inicio = request.query_params.get('fecha_inicio')
+            fecha_fin = request.query_params.get('fecha_fin')
+            if fecha_inicio and fecha_fin:
+                from django.utils.dateparse import parse_date
+                desde = parse_date(fecha_inicio)
+                hasta = parse_date(fecha_fin)
+                if desde and hasta:
+                    ventas = ventas.filter(fecha_venta__date__gte=desde, fecha_venta__date__lte=hasta)
+            
+            serializer = VentaHistoricoMovilSerializer(ventas, many=True)
+            
+            return Response({
+                'success': True,
+                'total': ventas.count(),
+                'data': serializer.data
+            })
+        
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def dashboard_movil(self, request):
+        """
+        CU19: Obtener dashboard resumido para móvil
+        GET /api/sales/ventas-movil/dashboard_movil/
+        """
+        try:
+            usuario = request.user.usuarios
+            
+            # Obtener ventas del usuario
+            ventas = Venta.objects.filter(usuario=usuario)
+            
+            # Calcular estadísticas
+            total_vendido = ventas.aggregate(total=Sum('total'))['total'] or 0
+            total_ventas = ventas.count()
+            promedio_venta = total_vendido / total_ventas if total_ventas > 0 else 0
+            
+            # Últimas 5 ventas
+            ultimas_ventas = ventas.order_by('-fecha_venta')[:5]
+            
+            # Contar por estado
+            ventas_pendientes = ventas.filter(estado='pendiente').count()
+            ventas_pagadas = ventas.filter(estado='pagada').count()
+            ventas_en_proceso = ventas.filter(estado='en_proceso').count()
+            
+            # Alertas personalizadas
+            alertas = []
+            if ventas_pendientes > 0:
+                alertas.append({
+                    'tipo': 'pendiente',
+                    'titulo': f'{ventas_pendientes} Ventas Pendientes',
+                    'mensaje': 'Tienes ventas pendientes de pago'
+                })
+            
+            if total_vendido == 0:
+                alertas.append({
+                    'tipo': 'info',
+                    'titulo': 'Sin ventas registradas',
+                    'mensaje': 'Comienza a realizar compras'
+                })
+            
+            data = {
+                'total_vendido': float(total_vendido),
+                'total_ventas': total_ventas,
+                'promedio_venta': float(promedio_venta),
+                'ultimas_ventas': VentaHistoricoMovilSerializer(ultimas_ventas, many=True).data,
+                'ventas_pendientes': ventas_pendientes,
+                'ventas_pagadas': ventas_pagadas,
+                'ventas_en_proceso': ventas_en_proceso,
+                'alertas': alertas
+            }
+            
+            return Response({
+                'success': True,
+                'data': data
+            })
+        
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class NotificacionPushViewSet(viewsets.ModelViewSet):
+    """
+    CU20: API para gestionar notificaciones push
+    """
+    queryset = NotificacionPush.objects.all()
+    serializer_class = NotificacionPushSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filtrar notificaciones del usuario"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return NotificacionPush.objects.all()
+        try:
+            usuario = self.request.user.usuarios
+            return NotificacionPush.objects.filter(usuario=usuario)
+        except:
+            return NotificacionPush.objects.none()
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return NotificacionPushCreateSerializer
+        return NotificacionPushSerializer
+    
+    def perform_create(self, serializer):
+        """Registrar quien creó la notificación"""
+        try:
+            usuario = self.request.user.usuarios
+            if serializer.validated_data.get('usuario') is None:
+                serializer.validated_data['usuario'] = usuario
+        except:
+            pass
+        serializer.save()
+    
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def no_leidas(self, request):
+        """
+        Obtener notificaciones no entregadas
+        GET /api/sales/notificaciones/no_leidas/
+        """
+        try:
+            usuario = request.user.usuarios
+            notificaciones = NotificacionPush.objects.filter(
+                usuario=usuario,
+                estado__in=['pendiente', 'enviada']
+            ).order_by('-created_at')
+            
+            serializer = self.get_serializer(notificaciones, many=True)
+            
+            return Response({
+                'success': True,
+                'total': notificaciones.count(),
+                'data': serializer.data
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def marcar_entregada(self, request, pk=None):
+        """
+        Marcar notificación como entregada
+        POST /api/sales/notificaciones/{id}/marcar_entregada/
+        """
+        notificacion = self.get_object()
+        notificacion.marcar_entregada()
+        
+        return Response({
+            'success': True,
+            'message': 'Notificación marcada como entregada',
+            'data': NotificacionPushSerializer(notificacion).data
+        })
+    
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAdminUser])
+    def enviar_a_usuarios(self, request):
+        """
+        Enviar notificación a múltiples usuarios (Admin)
+        POST /api/sales/notificaciones/enviar_a_usuarios/
+        
+        Body: {
+            "usuarios_ids": [1, 2, 3],
+            "titulo": "Nuevo descuento",
+            "mensaje": "Tenemos un 20% de descuento",
+            "tipo": "promocion"
+        }
+        """
+        usuarios_ids = request.data.get('usuarios_ids', [])
+        titulo = request.data.get('titulo')
+        mensaje = request.data.get('mensaje')
+        tipo = request.data.get('tipo', 'otro')
+        
+        if not usuarios_ids or not titulo or not mensaje:
+            return Response({
+                'success': False,
+                'error': 'Se requiere usuarios_ids, titulo y mensaje'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            notificaciones_creadas = []
+            from apps.authentication.models import Usuarios
+            
+            usuarios = Usuarios.objects.filter(id__in=usuarios_ids)
+            for usuario in usuarios:
+                notif = NotificacionPush.objects.create(
+                    usuario=usuario,
+                    titulo=titulo,
+                    mensaje=mensaje,
+                    tipo=tipo
+                )
+                notificaciones_creadas.append(notif)
+            
+            return Response({
+                'success': True,
+                'message': f'{len(notificaciones_creadas)} notificaciones creadas',
+                'total': len(notificaciones_creadas)
+            }, status=status.HTTP_201_CREATED)
+        
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
