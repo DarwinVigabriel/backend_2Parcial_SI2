@@ -1,6 +1,7 @@
 asgiref==3.10.0
 attrs==25.4.0
 certifi==2025.10.5
+cffi==2.0.0
 charset-normalizer==3.4.4
 colorama==0.4.6
 dj-database-url==3.0.1
@@ -14,6 +15,7 @@ inflection==0.5.1
 Jinja2==3.1.6
 jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
+Levenshtein==0.27.3
 llvmlite==0.45.1
 MarkupSafe==3.0.3
 more-itertools==10.8.0
@@ -22,27 +24,29 @@ networkx==3.5
 numba==0.62.1
 numpy==2.3.4
 psycopg2-binary==2.9.11
+pycparser==2.23
 PyJWT==2.10.1
 python-dotenv==1.2.1
-python-Levenshtein==0.21.1
+python-Levenshtein==0.27.3
 PyYAML==6.0.3
+RapidFuzz==3.14.3
 referencing==0.37.0
 regex==2025.11.3
 requests==2.32.5
 rpds-py==0.28.0
 setuptools==80.9.0
 sqlparse==0.5.3
+srt==3.5.3
 stripe==13.2.0
 sympy==1.14.0
-thefuzz==0.20.0
+thefuzz==0.22.1
 tiktoken==0.12.0
+torch==2.9.0
+torchaudio==2.9.0
 tqdm==4.67.1
 typing_extensions==4.15.0
 tzdata==2025.2
 uritemplate==4.2.0
 urllib3==2.5.0
 vosk==0.3.45
-
-# FFmpeg es necesario para convertir audio a formato WAV
-# Instálalo en Windows con: choco install ffmpeg
-# O descárgalo de: https://ffmpeg.org/download.html
+websockets==15.0.1

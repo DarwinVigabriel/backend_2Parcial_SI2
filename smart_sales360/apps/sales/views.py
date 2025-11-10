@@ -1258,3 +1258,387 @@ class PagoViewSet(viewsets.ModelViewSet):
             'success': True,
             'data': stats
         })
+
+
+# ============================================================================
+# CU14, CU15, CU16: Endpoints para Comprobantes, Histórico y Dashboard
+# ============================================================================
+
+class VentaComprobantePDFViewSet(viewsets.ViewSet):
+    """
+    API para descargar comprobantes PDF de ventas
+    
+    CU14: Emitir Comprobante de Venta (PDF)
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    
+    @action(detail=False, methods=['get'])
+    def descargar_pdf(self, request):
+        """
+        Descargar comprobante PDF de una venta
+        
+        GET /api/sales/comprobante/descargar_pdf/?venta_id=1
+        """
+        venta_id = request.query_params.get('venta_id')
+        
+        if not venta_id:
+            return Response({
+                'success': False,
+                'error': 'venta_id es requerido'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            venta = Venta.objects.get(id=venta_id)
+            
+            # Generar PDF
+            pdf_buffer = venta.generar_comprobante_pdf()
+            
+            # Crear respuesta
+            from django.http import HttpResponse
+            response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="{venta.obtener_nombre_archivo_pdf()}"'
+            
+            return response
+            
+        except Venta.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Venta no encontrada'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class VentaHistoricoViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    API para listar histórico de ventas con filtros
+    
+    CU15: Listar Histórico de Ventas con Filtros
+    """
+    queryset = Venta.objects.all().order_by('-fecha_venta')
+    serializer_class = VentaSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    
+    def get_queryset(self):
+        """
+        Filtrar ventas por:
+        - fecha_inicio: fecha de inicio (YYYY-MM-DD)
+        - fecha_fin: fecha de fin (YYYY-MM-DD)
+        - cliente_id: ID del cliente
+        - estado: estado de la venta (pendiente, pagada, cancelada, etc)
+        - metodo_pago: método de pago (tarjeta, efectivo, transferencia, etc)
+        - vendedor_id: ID del vendedor
+        """
+        queryset = super().get_queryset()
+        
+        # Filtro por fecha inicio
+        fecha_inicio = self.request.query_params.get('fecha_inicio')
+        if fecha_inicio:
+            from django.utils.dateparse import parse_date
+            fecha = parse_date(fecha_inicio)
+            if fecha:
+                queryset = queryset.filter(fecha_venta__date__gte=fecha)
+        
+        # Filtro por fecha fin
+        fecha_fin = self.request.query_params.get('fecha_fin')
+        if fecha_fin:
+            from django.utils.dateparse import parse_date
+            fecha = parse_date(fecha_fin)
+            if fecha:
+                queryset = queryset.filter(fecha_venta__date__lte=fecha)
+        
+        # Filtro por cliente
+        cliente_id = self.request.query_params.get('cliente_id')
+        if cliente_id:
+            queryset = queryset.filter(cliente_id=cliente_id)
+        
+        # Filtro por estado
+        estado = self.request.query_params.get('estado')
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        
+        # Filtro por método de pago
+        metodo_pago = self.request.query_params.get('metodo_pago')
+        if metodo_pago:
+            queryset = queryset.filter(metodo_pago=metodo_pago)
+        
+        # Filtro por vendedor
+        vendedor_id = self.request.query_params.get('vendedor_id')
+        if vendedor_id:
+            queryset = queryset.filter(usuario_id=vendedor_id)
+        
+        # Búsqueda por código de venta o cliente
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(codigo_venta__icontains=search) |
+                Q(cliente__nombre_completo__icontains=search)
+            )
+        
+        return queryset
+    
+    @action(detail=False, methods=['get'])
+    def filtros_disponibles(self, request):
+        """
+        Obtener opciones disponibles para filtros
+        
+        GET /api/sales/historico/filtros_disponibles/
+        """
+        from apps.clients.models import Clientes
+        from apps.authentication.models import Usuarios
+        
+        clientes = Clientes.objects.filter(activo=True).values('id', 'nombre_completo')
+        vendedores = Usuarios.objects.all().values('id', 'nombre')
+        
+        return Response({
+            'success': True,
+            'data': {
+                'estados': [
+                    {'value': 'pendiente', 'label': 'Pendiente'},
+                    {'value': 'pagada', 'label': 'Pagada'},
+                    {'value': 'cancelada', 'label': 'Cancelada'},
+                    {'value': 'reembolsada', 'label': 'Reembolsada'},
+                    {'value': 'en_proceso', 'label': 'En Proceso'},
+                ],
+                'metodos_pago': [
+                    {'value': 'tarjeta', 'label': 'Tarjeta'},
+                    {'value': 'efectivo', 'label': 'Efectivo'},
+                    {'value': 'transferencia', 'label': 'Transferencia'},
+                    {'value': 'paypal', 'label': 'PayPal'},
+                    {'value': 'stripe', 'label': 'Stripe'},
+                ],
+                'clientes': list(clientes),
+                'vendedores': list(vendedores),
+            }
+        })
+
+
+class VentaDashboardViewSet(viewsets.ViewSet):
+    """
+    API para obtener estadísticas del dashboard de ventas
+    
+    CU16: Visualizar Dashboard de Ventas Históricas
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    
+    @action(detail=False, methods=['get'])
+    def estadisticas(self, request):
+        """
+        Obtener estadísticas completas del dashboard
+        
+        GET /api/sales/dashboard/estadisticas/?fecha_inicio=2025-11-01&fecha_fin=2025-11-30&cliente_id=1&estado=pagada
+        
+        Parámetros opcionales:
+        - fecha_inicio: fecha de inicio (YYYY-MM-DD)
+        - fecha_fin: fecha de fin (YYYY-MM-DD)
+        - cliente_id: ID del cliente
+        - estado: estado de la venta
+        """
+        from .estadisticas import EstadisticasVentas
+        from django.utils.dateparse import parse_date
+        
+        # Obtener parámetros de filtro
+        fecha_inicio_str = request.query_params.get('fecha_inicio')
+        fecha_fin_str = request.query_params.get('fecha_fin')
+        cliente_id = request.query_params.get('cliente_id')
+        estado = request.query_params.get('estado')
+        
+        fecha_inicio = parse_date(fecha_inicio_str) if fecha_inicio_str else None
+        fecha_fin = parse_date(fecha_fin_str) if fecha_fin_str else None
+        
+        try:
+            # Calcular estadísticas
+            stats_obj = EstadisticasVentas(
+                fecha_inicio=fecha_inicio,
+                fecha_fin=fecha_fin,
+                cliente_id=cliente_id if cliente_id else None,
+                estado=estado if estado else None
+            )
+            
+            estadisticas = stats_obj.obtener_estadisticas_completas()
+            
+            return Response({
+                'success': True,
+                'data': estadisticas
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def resumen(self, request):
+        """
+        Obtener resumen rápido de ventas
+        
+        GET /api/sales/dashboard/resumen/
+        """
+        from .estadisticas import EstadisticasVentas
+        
+        try:
+            stats = EstadisticasVentas()
+            resumen = stats.obtener_resumen()
+            
+            return Response({
+                'success': True,
+                'data': resumen
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def por_estado(self, request):
+        """
+        Obtener ventas agrupadas por estado
+        
+        GET /api/sales/dashboard/por_estado/
+        """
+        from .estadisticas import EstadisticasVentas
+        
+        try:
+            stats = EstadisticasVentas()
+            por_estado = stats.obtener_ventas_por_estado()
+            
+            return Response({
+                'success': True,
+                'data': por_estado
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def por_metodo_pago(self, request):
+        """
+        Obtener ventas agrupadas por método de pago
+        
+        GET /api/sales/dashboard/por_metodo_pago/
+        """
+        from .estadisticas import EstadisticasVentas
+        
+        try:
+            stats = EstadisticasVentas()
+            por_metodo = stats.obtener_ventas_por_metodo()
+            
+            return Response({
+                'success': True,
+                'data': por_metodo
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def top_productos(self, request):
+        """
+        Obtener top 10 productos más vendidos
+        
+        GET /api/sales/dashboard/top_productos/?limite=10
+        """
+        from .estadisticas import EstadisticasVentas
+        
+        try:
+            limite = int(request.query_params.get('limite', 10))
+            stats = EstadisticasVentas()
+            top_productos = stats.obtener_top_productos(limite=limite)
+            
+            return Response({
+                'success': True,
+                'data': top_productos
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def por_vendedor(self, request):
+        """
+        Obtener estadísticas por vendedor
+        
+        GET /api/sales/dashboard/por_vendedor/
+        """
+        from .estadisticas import EstadisticasVentas
+        
+        try:
+            stats = EstadisticasVentas()
+            por_vendedor = stats.obtener_ventas_por_vendedor()
+            
+            return Response({
+                'success': True,
+                'data': por_vendedor
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def tendencia_diaria(self, request):
+        """
+        Obtener tendencia de ventas diaria
+        
+        GET /api/sales/dashboard/tendencia_diaria/?dias=30
+        """
+        from .estadisticas import EstadisticasVentas
+        
+        try:
+            dias = int(request.query_params.get('dias', 30))
+            stats = EstadisticasVentas()
+            tendencia = stats.obtener_tendencia_diaria(dias=dias)
+            
+            return Response({
+                'success': True,
+                'data': tendencia
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def tendencia_mensual(self, request):
+        """
+        Obtener tendencia de ventas mensual
+        
+        GET /api/sales/dashboard/tendencia_mensual/?meses=12
+        """
+        from .estadisticas import EstadisticasVentas
+        
+        try:
+            meses = int(request.query_params.get('meses', 12))
+            stats = EstadisticasVentas()
+            tendencia = stats.obtener_tendencia_mensual(meses=meses)
+            
+            return Response({
+                'success': True,
+                'data': tendencia
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+

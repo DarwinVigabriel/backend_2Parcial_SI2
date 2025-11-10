@@ -109,6 +109,19 @@ class Venta(models.Model):
     def impuesto(self):
         """Alias para mantener compatibilidad con código que usa impuesto"""
         return self.iva
+    
+    # CU14: Métodos para generar comprobante de venta
+    def generar_comprobante_pdf(self):
+        """
+        Genera un comprobante de venta en PDF
+        Retorna un BytesIO con el archivo PDF
+        """
+        from .comprobante_pdf import generar_comprobante_pdf
+        return generar_comprobante_pdf(self)
+    
+    def obtener_nombre_archivo_pdf(self):
+        """Obtiene un nombre descriptivo para el archivo PDF"""
+        return f"Comprobante_{self.codigo_venta}_{self.fecha_venta.strftime('%Y%m%d')}.pdf"
 
     def save(self, *args, **kwargs):
         # Generar código de venta automático si no existe

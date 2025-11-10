@@ -405,3 +405,63 @@ class PagoQRSerializer(serializers.Serializer):
             'venta_numero': venta.numero_venta,
             'monto': str(venta.total)
         }
+
+
+# CU14: Serializer para descargar comprobante PDF
+class ComprobanteDescargarSerializer(serializers.Serializer):
+    """Serializer para descargar comprobante de venta en PDF"""
+    venta_id = serializers.IntegerField(required=True)
+    
+    def validate_venta_id(self, value):
+        try:
+            Venta.objects.get(id=value)
+        except Venta.DoesNotExist:
+            raise serializers.ValidationError("Venta no encontrada")
+        return value
+
+
+# CU15 & CU16: Serializers para reportes y estadísticas
+class VentaListadoSerializer(serializers.ModelSerializer):
+    """Serializer para listar ventas con información completa"""
+    cliente_nombre = serializers.CharField(source='cliente.nombre_completo', read_only=True)
+    vendedor_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    total_detalles = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Venta
+        fields = [
+            'id', 'codigo_venta', 'cliente_nombre', 'vendedor_nombre',
+            'subtotal', 'descuento', 'iva', 'total', 'estado',
+            'metodo_pago', 'total_detalles', 'fecha_venta', 'created_at'
+        ]
+    
+    def get_total_detalles(self, obj):
+        return obj.detalles.count()
+
+
+class EstadisticasVentasSerializer(serializers.Serializer):
+    """Serializer para estadísticas de ventas (CU16)"""
+    total_vendido = serializers.DecimalField(max_digits=15, decimal_places=2)
+    cantidad_ventas = serializers.IntegerField()
+    promedio_por_venta = serializers.DecimalField(max_digits=15, decimal_places=2)
+    total_descuentos = serializers.DecimalField(max_digits=15, decimal_places=2)
+    total_impuestos = serializers.DecimalField(max_digits=15, decimal_places=2)
+    
+    # Por estado
+    ventas_pendientes = serializers.IntegerField()
+    ventas_pagadas = serializers.IntegerField()
+    ventas_canceladas = serializers.IntegerField()
+    
+    # Por método de pago
+    ventas_tarjeta = serializers.IntegerField()
+    ventas_efectivo = serializers.IntegerField()
+    ventas_transferencia = serializers.IntegerField()
+    ventas_otros = serializers.IntegerField()
+    
+    # Top productos
+    top_productos = serializers.ListField()
+    
+    # Tendencia
+    periodo = serializers.CharField()
+    fecha_inicio = serializers.DateTimeField()
+    fecha_fin = serializers.DateTimeField()

@@ -4,6 +4,7 @@ from django.shortcuts import render, redirect
 from django.utils.html import format_html
 from django.contrib import messages
 from django.db import transaction
+from django.http import HttpResponse
 from .models import Cart, CartItem, Venta, VentaDetalle, Pago
 
 
@@ -138,7 +139,7 @@ class VentaAdmin(admin.ModelAdmin):
         'subtotal_display', 'descuento_display', 'iva_display', 'total_display'
     )
     inlines = [VentaDetalleInline, PagoInline]
-    actions = ['cancelar_ventas', 'exportar_ventas']
+    actions = ['cancelar_ventas', 'exportar_ventas', 'descargar_comprobante_pdf']
     date_hierarchy = 'fecha_venta'
     
     fieldsets = (
@@ -368,6 +369,95 @@ class VentaAdmin(admin.ModelAdmin):
             'opts': self.model._meta,
         }
         return render(request, 'admin/sales/crear_venta_desde_carrito.html', context)
+    
+    # CU14: Acción para descargar comprobante PDF
+    def descargar_comprobante_pdf(self, request, queryset):
+        """Acción para descargar comprobante de venta en PDF"""
+        if queryset.count() == 1:
+            venta = queryset.first()
+            
+            try:
+                # Generar PDF
+                pdf_buffer = venta.generar_comprobante_pdf()
+                
+                # Preparar respuesta
+                response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
+                response['Content-Disposition'] = f'attachment; filename="{venta.obtener_nombre_archivo_pdf()}"'
+                return response
+            except Exception as e:
+                messages.error(request, f'Error al generar comprobante: {str(e)}')
+        else:
+            messages.error(request, 'Selecciona una sola venta para descargar el comprobante')
+    
+    descargar_comprobante_pdf.short_description = '📄 Descargar Comprobante PDF'
+    
+    # CU15: Vista personalizada para listar con filtros
+    def changelist_view(self, request, extra_context=None):
+        """
+        Agrega información de filtros disponibles
+        """
+        from .estadisticas import EstadisticasVentas
+        
+        extra_context = extra_context or {}
+        
+        # Calcular estadísticas rápidas
+        stats = EstadisticasVentas()
+        resumen = stats.obtener_resumen()
+        
+        extra_context['resumen_ventas'] = resumen
+        extra_context['show_dashboard_button'] = True
+        
+        return super().changelist_view(request, extra_context=extra_context)
+    
+    # CU16: Acción para ver dashboard
+    def dashboard_ventas(self, request):
+        """Vista personalizada para mostrar dashboard de ventas"""
+        from .estadisticas import EstadisticasVentas
+        from django.utils.dateparse import parse_date
+        
+        # Obtener parámetros de filtro
+        fecha_inicio_str = request.GET.get('fecha_inicio')
+        fecha_fin_str = request.GET.get('fecha_fin')
+        cliente_id = request.GET.get('cliente_id')
+        estado = request.GET.get('estado')
+        
+        fecha_inicio = parse_date(fecha_inicio_str) if fecha_inicio_str else None
+        fecha_fin = parse_date(fecha_fin_str) if fecha_fin_str else None
+        
+        # Calcular estadísticas
+        stats_obj = EstadisticasVentas(
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            cliente_id=cliente_id if cliente_id else None,
+            estado=estado if estado else None
+        )
+        
+        estadisticas = stats_obj.obtener_estadisticas_completas()
+        
+        from apps.clients.models import Clientes
+        clientes = Clientes.objects.filter(activo=True)
+        
+        context = {
+            **self.admin_site.each_context(request),
+            'title': 'Dashboard de Ventas',
+            'estadisticas': estadisticas,
+            'clientes': clientes,
+            'opts': self.model._meta,
+            'fecha_inicio': fecha_inicio_str,
+            'fecha_fin': fecha_fin_str,
+            'cliente_id': cliente_id,
+            'estado': estado,
+        }
+        
+        return render(request, 'admin/sales/dashboard_ventas.html', context)
+    
+    def get_urls(self):
+        """Agrega URLs personalizadas"""
+        urls = super().get_urls()
+        custom_urls = [
+            path('dashboard/', self.admin_site.admin_view(self.dashboard_ventas), name='sales_venta_dashboard'),
+        ]
+        return custom_urls + urls
 
 
 @admin.register(VentaDetalle)

@@ -1,0 +1,413 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Dashboard de Ventas{% endblock %}
+
+{% block extrahead %}
+<style>
+    /* Estilos Django Admin estándar */
+    #content-main {
+        background: transparent;
+    }
+    
+    .dashboard-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px;
+        margin: 20px 0;
+    }
+    
+    .stat-card {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 15px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    
+    .stat-card h3 {
+        color: #666;
+        margin: 0 0 8px 0;
+        font-size: 11px;
+        font-weight: bold;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .stat-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #333;
+        margin: 5px 0;
+    }
+    
+    .stat-subtext {
+        font-size: 12px;
+        color: #666;
+    }
+    
+    .filters {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 15px;
+        margin: 20px 0;
+    }
+    
+    .filters h2 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 16px;
+        color: #333;
+    }
+    
+    .filters form {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+        align-items: flex-end;
+    }
+    
+    .filters label {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 12px;
+        font-weight: bold;
+        color: #333;
+    }
+    
+    .filters input, .filters select {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #ccc;
+        border-radius: 3px;
+        font-size: 13px;
+        background: #fff;
+        color: #333;
+        box-sizing: border-box;
+    }
+    
+    .filters input:focus, .filters select:focus {
+        border-color: #999;
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(0,0,0,0.1);
+    }
+    
+    .filters button {
+        background: #417690;
+        color: white;
+        border: 1px solid #417690;
+        padding: 8px 16px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-weight: bold;
+        font-size: 13px;
+        transition: background 0.2s;
+    }
+    
+    .filters button:hover {
+        background: #2e5266;
+    }
+    
+    .filters button:active {
+        background: #1e3840;
+    }
+    
+    .table-section {
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 0;
+        margin: 20px 0;
+        overflow: hidden;
+    }
+    
+    .table-section h4 {
+        color: #333;
+        margin: 0;
+        font-size: 14px;
+        font-weight: bold;
+        background: #f8f8f8;
+        border-bottom: 1px solid #ddd;
+        padding: 12px 15px;
+    }
+    
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        background: #fff;
+    }
+    
+    th {
+        background: #f8f8f8;
+        border-bottom: 1px solid #ddd;
+        padding: 12px 15px;
+        text-align: left;
+        font-weight: bold;
+        color: #333;
+        font-size: 12px;
+    }
+    
+    td {
+        border-bottom: 1px solid #eee;
+        padding: 12px 15px;
+        color: #333;
+    }
+    
+    tr:last-child td {
+        border-bottom: none;
+    }
+    
+    tr:hover {
+        background: #f5f5f5;
+    }
+    
+    .back-link {
+        display: inline-block;
+        margin-bottom: 20px;
+        padding: 8px 16px;
+        background: #417690;
+        color: white;
+        text-decoration: none;
+        border-radius: 3px;
+        font-weight: bold;
+        font-size: 13px;
+        transition: background 0.2s;
+    }
+    
+    .back-link:hover {
+        background: #2e5266;
+    }
+    
+    .no-data {
+        text-align: center;
+        color: #999;
+        padding: 30px;
+        font-style: italic;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <a href="/admin/sales/venta/" class="back-link">← Volver a Ventas</a>
+    
+    <h1>📊 Dashboard de Ventas</h1>
+    
+    <!-- Filtros -->
+    <div class="filters">
+        <form method="get">
+            <div>
+                <label for="fecha_inicio">Fecha Inicio:</label>
+                <input type="date" name="fecha_inicio" id="fecha_inicio" value="{{ fecha_inicio }}">
+            </div>
+            <div>
+                <label for="fecha_fin">Fecha Fin:</label>
+                <input type="date" name="fecha_fin" id="fecha_fin" value="{{ fecha_fin }}">
+            </div>
+            <div>
+                <label for="cliente_id">Cliente:</label>
+                <select name="cliente_id" id="cliente_id">
+                    <option value="">Todos</option>
+                    {% for cliente in clientes %}
+                        <option value="{{ cliente.id }}" {% if cliente.id|stringformat:"s" == cliente_id %}selected{% endif %}>
+                            {{ cliente.nombre_completo }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label for="estado">Estado:</label>
+                <select name="estado" id="estado">
+                    <option value="">Todos</option>
+                    <option value="pendiente" {% if estado == 'pendiente' %}selected{% endif %}>Pendiente</option>
+                    <option value="pagada" {% if estado == 'pagada' %}selected{% endif %}>Pagada</option>
+                    <option value="cancelada" {% if estado == 'cancelada' %}selected{% endif %}>Cancelada</option>
+                    <option value="reembolsada" {% if estado == 'reembolsada' %}selected{% endif %}>Reembolsada</option>
+                    <option value="en_proceso" {% if estado == 'en_proceso' %}selected{% endif %}>En Proceso</option>
+                </select>
+            </div>
+            <button type="submit">🔍 Filtrar</button>
+        </form>
+    </div>
+    
+    <!-- Resumen General -->
+    <h2>Resumen General</h2>
+    <div class="dashboard-container">
+        <div class="stat-card">
+            <h3>Total Vendido</h3>
+            <div class="stat-value">${{ estadisticas.resumen.total_vendido|floatformat:2 }}</div>
+            <div class="stat-subtext">{{ estadisticas.resumen.cantidad_ventas }} ventas realizadas</div>
+        </div>
+        
+        <div class="stat-card">
+            <h3>Promedio por Venta</h3>
+            <div class="stat-value">${{ estadisticas.resumen.promedio_por_venta|floatformat:2 }}</div>
+            <div class="stat-subtext">Monto promedio</div>
+        </div>
+        
+        <div class="stat-card">
+            <h3>Descuentos Totales</h3>
+            <div class="stat-value">${{ estadisticas.resumen.total_descuentos|floatformat:2 }}</div>
+            <div class="stat-subtext">Aplicados en período</div>
+        </div>
+        
+        <div class="stat-card">
+            <h3>IVA Total</h3>
+            <div class="stat-value">${{ estadisticas.resumen.total_impuestos|floatformat:2 }}</div>
+            <div class="stat-subtext">Impuestos cobrados</div>
+        </div>
+    </div>
+    
+    <!-- Ventas por Estado -->
+    <div class="table-section">
+        <h4>📊 Ventas por Estado</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Estado</th>
+                    <th>Cantidad</th>
+                    <th>Monto Total</th>
+                    <th>Porcentaje</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for estado, datos in estadisticas.ventas_por_estado.items %}
+                <tr>
+                    <td>{{ estado|upper }}</td>
+                    <td>{{ datos.cantidad }}</td>
+                    <td>${{ datos.monto|floatformat:2 }}</td>
+                    <td>{{ datos.porcentaje|floatformat:1 }}%</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="no-data">Sin datos</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Ventas por Método de Pago -->
+    <div class="table-section">
+        <h4>💳 Ventas por Método de Pago</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Método</th>
+                    <th>Cantidad</th>
+                    <th>Monto Total</th>
+                    <th>Porcentaje</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for metodo, datos in estadisticas.ventas_por_metodo.items %}
+                <tr>
+                    <td>{{ metodo|upper }}</td>
+                    <td>{{ datos.cantidad }}</td>
+                    <td>${{ datos.monto|floatformat:2 }}</td>
+                    <td>{{ datos.porcentaje|floatformat:1 }}%</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="no-data">Sin datos</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Top Productos -->
+    <div class="table-section">
+        <h4>🏆 Top 10 Productos más Vendidos</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Posición</th>
+                    <th>Producto</th>
+                    <th>SKU</th>
+                    <th>Cantidad Vendida</th>
+                    <th>Monto Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for producto in estadisticas.top_productos %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ producto.nombre }}</td>
+                    <td>{{ producto.sku }}</td>
+                    <td>{{ producto.cantidad }}</td>
+                    <td>${{ producto.monto|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="no-data">Sin datos</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- Ventas por Vendedor -->
+    {% if estadisticas.ventas_por_vendedor %}
+    <div class="table-section">
+        <h4>👥 Desempeño por Vendedor</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Vendedor</th>
+                    <th>Cantidad de Ventas</th>
+                    <th>Total Vendido</th>
+                    <th>Promedio por Venta</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vendedor in estadisticas.ventas_por_vendedor %}
+                <tr>
+                    <td>{{ vendedor.vendedor }}</td>
+                    <td>{{ vendedor.cantidad }}</td>
+                    <td>${{ vendedor.total|floatformat:2 }}</td>
+                    <td>${{ vendedor.promedio|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="no-data">Sin datos</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+    
+    <!-- Tendencia Diaria -->
+    {% if estadisticas.tendencia_diaria %}
+    <div class="table-section">
+        <h4>📈 Tendencia Diaria (Últimos 30 días)</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Cantidad de Ventas</th>
+                    <th>Total Vendido</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tendencia in estadisticas.tendencia_diaria %}
+                <tr>
+                    <td>{{ tendencia.fecha }}</td>
+                    <td>{{ tendencia.cantidad }}</td>
+                    <td>${{ tendencia.total|floatformat:2 }}</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="3" class="no-data">Sin datos</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+    
+</div>
+{% endblock %}
