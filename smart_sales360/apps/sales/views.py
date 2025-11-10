@@ -28,7 +28,7 @@ except ImportError:
     FUZZ_AVAILABLE = False
     print("⚠️ TheFuzz no está instalado. Instala con: pip install thefuzz python-Levenshtein")
 
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte
 from apps.authentication.models import DispositivosMoviles
 from .serializers import (
     CartSerializer, 
@@ -47,7 +47,12 @@ from .serializers import (
     VentaHistoricoMovilSerializer,
     DashboardMovilSerializer,
     NotificacionPushSerializer,
-    NotificacionPushCreateSerializer
+    NotificacionPushCreateSerializer,
+    ReporteSerializer,
+    ReporteGenerarSerializer,
+    ReporteListadoSerializer,
+    ReporteExportarSerializer,
+    ReporteVozSerializer
 )
 from apps.products.models import Productos
 
@@ -1977,3 +1982,502 @@ class NotificacionPushViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ============================================================================
+# CU21, CU22, CU23: ViewSet para Reportes Dinámicos
+# ============================================================================
+
+class ReporteViewSet(viewsets.ModelViewSet):
+    """
+    CU21: Filtrar Datos y Exportar Gráficas del Dashboard
+    CU22: Generar Reporte Dinámico (Texto y Voz)
+    CU23: Descargar Reporte en Formato (PDF / Excel)
+    """
+    queryset = Reporte.objects.all()
+    serializer_class = ReporteSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    
+    def get_queryset(self):
+        """Filtrar reportes por usuario autenticado"""
+        return self.queryset.filter(usuario=self.request.user.usuarios)
+    
+    def get_serializer_class(self):
+        """Usar serializer específico según la acción"""
+        if self.action == 'create':
+            return ReporteGenerarSerializer
+        elif self.action == 'list':
+            return ReporteListadoSerializer
+        elif self.action == 'descargar':
+            return ReporteExportarSerializer
+        elif self.action == 'voz':
+            return ReporteVozSerializer
+        return ReporteSerializer
+    
+    def create(self, request, *args, **kwargs):
+        """CU22: Generar nuevo reporte dinámico"""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        import time
+        inicio = time.time()
+        
+        try:
+            # Crear reporte con estado 'generando'
+            reporte = Reporte.objects.create(
+                usuario=request.user.usuarios,
+                titulo=serializer.validated_data['titulo'],
+                tipo_reporte=serializer.validated_data['tipo_reporte'],
+                formato=serializer.validated_data.get('formato', 'pdf'),
+                filtros=self._construir_filtros(serializer.validated_data),
+                estado='generando'
+            )
+            
+            # Generar datos del reporte según tipo
+            datos_reporte = self._generar_datos_reporte(reporte, serializer.validated_data)
+            reporte.datos_reporte = datos_reporte
+            reporte.total_registros = len(datos_reporte.get('registros', []))
+            
+            # Generar resumen ejecutivo (IA simple)
+            reporte.resumen_texto = self._generar_resumen(datos_reporte, reporte.tipo_reporte)
+            
+            # Generar archivo según formato
+            if reporte.formato == 'pdf':
+                self._generar_pdf(reporte, datos_reporte)
+            elif reporte.formato == 'excel':
+                self._generar_excel(reporte, datos_reporte)
+            elif reporte.formato == 'csv':
+                self._generar_csv(reporte, datos_reporte)
+            
+            # Generar voz si se solicita
+            if serializer.validated_data.get('incluir_voz', False):
+                self._generar_voz(reporte)
+            
+            # Marcar como completado
+            reporte.tiempo_generacion = time.time() - inicio
+            reporte.estado = 'completado'
+            reporte.save()
+            
+            return Response(
+                ReporteSerializer(reporte).data,
+                status=status.HTTP_201_CREATED
+            )
+        
+        except Exception as e:
+            print(f"❌ Error generando reporte: {str(e)}")
+            reporte.registrar_error(str(e))
+            return Response({
+                'error': f'Error al generar reporte: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['get'])
+    def listar_por_tipo(self, request):
+        """CU21: Listar reportes filtrados por tipo"""
+        tipo = request.query_params.get('tipo')
+        estado = request.query_params.get('estado')
+        
+        queryset = self.get_queryset()
+        
+        if tipo:
+            queryset = queryset.filter(tipo_reporte=tipo)
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        
+        serializer = ReporteListadoSerializer(queryset.order_by('-fecha_generacion'), many=True)
+        return Response({
+            'total': queryset.count(),
+            'reportes': serializer.data
+        })
+    
+    @action(detail=True, methods=['post'])
+    def descargar(self, request, pk=None):
+        """CU23: Descargar reporte en el formato especificado"""
+        reporte = self.get_object()
+        
+        if reporte.estado != 'completado':
+            return Response({
+                'error': 'El reporte aún no está generado o tiene errores'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Marcar como descargado
+            reporte.marcar_descargado()
+            
+            # Obtener el archivo según formato
+            archivo = reporte.get_archivo_por_formato()
+            
+            if not archivo or not archivo.name:
+                return Response({
+                    'error': f'El archivo {reporte.formato} no está disponible'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Retornar archivo para descargar
+            from django.http import FileResponse
+            response = FileResponse(
+                archivo.open('rb'),
+                content_type='application/octet-stream'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{reporte.titulo}.{reporte.formato}"'
+            
+            return response
+        
+        except Exception as e:
+            return Response({
+                'error': f'Error descargando reporte: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def voz(self, request, pk=None):
+        """CU22: Obtener/generar resumen en voz del reporte"""
+        reporte = self.get_object()
+        
+        if reporte.estado != 'completado':
+            return Response({
+                'error': 'El reporte debe estar completado'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            regenerar = request.data.get('regenerar', False)
+            
+            # Si ya existe audio y no se solicita regenerar
+            if reporte.resumen_voz and reporte.resumen_voz.name and not regenerar:
+                from django.http import FileResponse
+                response = FileResponse(
+                    reporte.resumen_voz.open('rb'),
+                    content_type='audio/mpeg'
+                )
+                response['Content-Disposition'] = f'attachment; filename="{reporte.titulo}_voz.mp3"'
+                return response
+            
+            # Generar voz
+            self._generar_voz(reporte, idioma=request.data.get('idioma', 'es'))
+            
+            # Retornar archivo de audio
+            from django.http import FileResponse
+            response = FileResponse(
+                reporte.resumen_voz.open('rb'),
+                content_type='audio/mpeg'
+            )
+            response['Content-Disposition'] = f'attachment; filename="{reporte.titulo}_voz.mp3"'
+            
+            return response
+        
+        except Exception as e:
+            return Response({
+                'error': f'Error generando voz: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    def _construir_filtros(self, validated_data):
+        """Construir diccionario de filtros"""
+        filtros = {}
+        
+        if validated_data.get('fecha_inicio'):
+            filtros['fecha_inicio'] = str(validated_data['fecha_inicio'])
+        if validated_data.get('fecha_fin'):
+            filtros['fecha_fin'] = str(validated_data['fecha_fin'])
+        if validated_data.get('cliente_id'):
+            filtros['cliente_id'] = validated_data['cliente_id']
+        if validated_data.get('cliente_ids'):
+            filtros['cliente_ids'] = validated_data['cliente_ids']
+        if validated_data.get('producto_id'):
+            filtros['producto_id'] = validated_data['producto_id']
+        if validated_data.get('estado_venta'):
+            filtros['estado_venta'] = validated_data['estado_venta']
+        if validated_data.get('metodo_pago'):
+            filtros['metodo_pago'] = validated_data['metodo_pago']
+        if validated_data.get('agrupar_por'):
+            filtros['agrupar_por'] = validated_data['agrupar_por']
+        
+        return filtros
+    
+    def _generar_datos_reporte(self, reporte, validated_data):
+        """Generar datos del reporte según tipo"""
+        from django.db.models import Sum, Count, Avg, F
+        from django.db import models
+        from datetime import datetime
+        
+        tipo_reporte = validated_data['tipo_reporte']
+        filtros = reporte.filtros
+        
+        datos = {
+            'tipo': tipo_reporte,
+            'generado_en': timezone.now().isoformat(),
+            'registros': [],
+            'totales': {},
+            'graficas': []
+        }
+        
+        try:
+            if tipo_reporte == 'ventas':
+                ventas_qs = Venta.objects.select_related('cliente', 'usuario')
+                
+                if filtros.get('fecha_inicio'):
+                    ventas_qs = ventas_qs.filter(
+                        fecha_venta__gte=datetime.fromisoformat(filtros['fecha_inicio'])
+                    )
+                if filtros.get('fecha_fin'):
+                    ventas_qs = ventas_qs.filter(
+                        fecha_venta__lte=datetime.fromisoformat(filtros['fecha_fin'])
+                    )
+                if filtros.get('cliente_id'):
+                    ventas_qs = ventas_qs.filter(cliente_id=filtros['cliente_id'])
+                if filtros.get('estado_venta'):
+                    ventas_qs = ventas_qs.filter(estado=filtros['estado_venta'])
+                
+                for venta in ventas_qs[:100]:
+                    datos['registros'].append({
+                        'id': venta.id,
+                        'codigo': venta.codigo_venta,
+                        'cliente': venta.cliente.nombre_completo,
+                        'fecha': venta.fecha_venta.isoformat(),
+                        'total': str(venta.total),
+                        'estado': venta.estado,
+                        'metodo_pago': venta.metodo_pago
+                    })
+                
+                stats = ventas_qs.aggregate(
+                    total_vendido=Sum('total'),
+                    cantidad=Count('id'),
+                    promedio=Avg('total')
+                )
+                
+                datos['totales'] = {
+                    'total_vendido': str(stats['total_vendido'] or 0),
+                    'cantidad_ventas': stats['cantidad'] or 0,
+                    'promedio_venta': str(stats['promedio'] or 0)
+                }
+            
+            elif tipo_reporte == 'productos':
+                productos_qs = VentaDetalle.objects.values('producto__nombre', 'producto__sku').annotate(
+                    total_vendido=Sum('cantidad'),
+                    ingresos=Sum(F('cantidad') * F('precio_unitario'), output_field=models.DecimalField())
+                )
+                
+                for prod in productos_qs[:50]:
+                    datos['registros'].append({
+                        'producto': prod['producto__nombre'],
+                        'sku': prod['producto__sku'],
+                        'cantidad': prod['total_vendido'],
+                        'ingresos': str(prod['ingresos'] or 0)
+                    })
+                
+                datos['totales'] = {
+                    'productos_vendidos': len(datos['registros'])
+                }
+            
+            elif tipo_reporte == 'estadisticas':
+                stats = Venta.objects.aggregate(
+                    total=Sum('total'),
+                    ventas=Count('id'),
+                    descuentos=Sum('descuento'),
+                    impuestos=Sum('iva')
+                )
+                
+                datos['totales'] = {
+                    'total_vendido': str(stats['total'] or 0),
+                    'total_ventas': stats['ventas'] or 0,
+                    'total_descuentos': str(stats['descuentos'] or 0),
+                    'total_impuestos': str(stats['impuestos'] or 0)
+                }
+        
+        except Exception as e:
+            print(f"⚠️ Error generando datos: {str(e)}")
+            datos['error'] = str(e)
+        
+        return datos
+    
+    def _generar_resumen(self, datos_reporte, tipo_reporte):
+        """Generar resumen ejecutivo en texto"""
+        totales = datos_reporte.get('totales', {})
+        
+        resumen = f"RESUMEN EJECUTIVO - {tipo_reporte.upper()}\nGenerado: {datos_reporte.get('generado_en')}\n\n"
+        
+        if tipo_reporte == 'ventas':
+            total = totales.get('total_vendido', '0')
+            cantidad = totales.get('cantidad_ventas', 0)
+            promedio = totales.get('promedio_venta', '0')
+            
+            resumen += f"""Total Vendido: ${total}
+Cantidad de Ventas: {cantidad}
+Promedio por Venta: ${promedio}
+
+Análisis: Se realizaron {cantidad} transacciones por un total de ${total}.
+"""
+        
+        elif tipo_reporte == 'productos':
+            resumen += f"""Total de Productos: {len(datos_reporte.get('registros', []))}
+Clasificados por volumen de ventas e ingresos generados.
+"""
+        
+        return resumen
+    
+    def _generar_pdf(self, reporte, datos_reporte):
+        """Generar PDF del reporte"""
+        try:
+            from reportlab.lib.pagesizes import letter
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.lib import colors
+            import io, uuid
+            
+            buffer = io.BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch)
+            
+            elements = []
+            styles = getSampleStyleSheet()
+            
+            # Título
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=24,
+                textColor=colors.HexColor('#1f4788'),
+                spaceAfter=30,
+                alignment=1
+            )
+            elements.append(Paragraph(reporte.titulo, title_style))
+            elements.append(Spacer(1, 0.3*inch))
+            
+            # Resumen
+            elements.append(Paragraph("<b>RESUMEN EJECUTIVO</b>", styles['Heading2']))
+            elements.append(Paragraph(reporte.resumen_texto.replace('\n', '<br/>'), styles['Normal']))
+            elements.append(Spacer(1, 0.3*inch))
+            
+            # Tabla de datos
+            if datos_reporte.get('registros'):
+                elements.append(PageBreak())
+                elements.append(Paragraph("<b>DETALLE</b>", styles['Heading2']))
+                
+                table_data = [list(datos_reporte['registros'][0].keys())]
+                for reg in datos_reporte['registros'][:20]:
+                    table_data.append(list(reg.values()))
+                
+                tabla = Table(table_data)
+                tabla.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f4788')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ]))
+                elements.append(tabla)
+            
+            doc.build(elements)
+            buffer.seek(0)
+            
+            nombre_archivo = f'reportes/pdf/{reporte.id}_{uuid.uuid4()}.pdf'
+            from django.core.files.base import ContentFile
+            reporte.archivo_pdf.save(nombre_archivo, ContentFile(buffer.read()), save=True)
+            print(f"✅ PDF generado: {nombre_archivo}")
+        
+        except Exception as e:
+            print(f"❌ Error en PDF: {str(e)}")
+            raise
+    
+    def _generar_excel(self, reporte, datos_reporte):
+        """Generar Excel del reporte"""
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, PatternFill, Alignment
+            import io, uuid
+            
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Reporte"
+            
+            ws['A1'] = reporte.titulo
+            ws['A1'].font = Font(bold=True, size=14, color="1f4788")
+            ws.merge_cells('A1:F1')
+            
+            ws['A3'] = 'RESUMEN'
+            ws['A3'].font = Font(bold=True, size=11)
+            ws['A4'] = reporte.resumen_texto
+            ws['A4'].alignment = Alignment(wrap_text=True)
+            ws.merge_cells('A4:F6')
+            
+            row = 9
+            if datos_reporte.get('registros'):
+                headers = list(datos_reporte['registros'][0].keys())
+                for col, header in enumerate(headers, 1):
+                    cell = ws.cell(row=row, column=col)
+                    cell.value = header
+                    cell.font = Font(bold=True, color="ffffff")
+                    cell.fill = PatternFill(start_color="1f4788", end_color="1f4788", fill_type="solid")
+                
+                row += 1
+                for reg in datos_reporte['registros'][:100]:
+                    for col, value in enumerate(reg.values(), 1):
+                        ws.cell(row=row, column=col).value = value
+                    row += 1
+            
+            buffer = io.BytesIO()
+            wb.save(buffer)
+            buffer.seek(0)
+            
+            nombre_archivo = f'reportes/excel/{reporte.id}_{uuid.uuid4()}.xlsx'
+            from django.core.files.base import ContentFile
+            reporte.archivo_excel.save(nombre_archivo, ContentFile(buffer.read()), save=True)
+            print(f"✅ Excel generado: {nombre_archivo}")
+        
+        except Exception as e:
+            print(f"❌ Error en Excel: {str(e)}")
+            raise
+    
+    def _generar_csv(self, reporte, datos_reporte):
+        """Generar CSV del reporte"""
+        try:
+            import csv, io, uuid
+            
+            buffer = io.StringIO()
+            writer = csv.writer(buffer)
+            
+            writer.writerow(['Reporte:', reporte.titulo])
+            writer.writerow(['Generado:', timezone.now().isoformat()])
+            writer.writerow([])
+            
+            if datos_reporte.get('registros'):
+                headers = list(datos_reporte['registros'][0].keys())
+                writer.writerow(headers)
+                
+                for reg in datos_reporte['registros']:
+                    writer.writerow(reg.values())
+            
+            csv_content = buffer.getvalue()
+            nombre_archivo = f'reportes/csv/{reporte.id}_{uuid.uuid4()}.csv'
+            from django.core.files.base import ContentFile
+            reporte.archivo_csv.save(nombre_archivo, ContentFile(csv_content.encode()), save=True)
+            print(f"✅ CSV generado: {nombre_archivo}")
+        
+        except Exception as e:
+            print(f"❌ Error en CSV: {str(e)}")
+            raise
+    
+    def _generar_voz(self, reporte, idioma='es'):
+        """Generar resumen en voz"""
+        try:
+            from gtts import gTTS
+            import io, uuid
+            
+            tts = gTTS(text=reporte.resumen_texto, lang=idioma, slow=False)
+            buffer = io.BytesIO()
+            tts.write_to_fp(buffer)
+            buffer.seek(0)
+            
+            nombre_archivo = f'reportes/audio/{reporte.id}_{uuid.uuid4()}.mp3'
+            from django.core.files.base import ContentFile
+            reporte.resumen_voz.save(nombre_archivo, ContentFile(buffer.read()), save=True)
+            print(f"✅ Audio generado: {nombre_archivo}")
+        
+        except ImportError:
+            print("⚠️ gTTS no instalado. Instala con: pip install gtts")
+            import uuid
+            reporte.resumen_voz.name = f'reportes/audio/placeholder_{uuid.uuid4()}.mp3'
+        
+        except Exception as e:
+            print(f"❌ Error en voz: {str(e)}")
+            raise

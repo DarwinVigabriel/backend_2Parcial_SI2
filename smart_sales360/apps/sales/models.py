@@ -508,6 +508,7 @@ class NotificacionPush(models.Model):
         self.fecha_entrega = timezone.now()
         self.save()
     
+    
     def registrar_error(self, error_msg):
         """Registra un error en el envío"""
         self.intentos += 1
@@ -515,3 +516,115 @@ class NotificacionPush(models.Model):
         if self.intentos >= 3:
             self.estado = 'fallida'
         self.save()
+
+
+class Reporte(models.Model):
+    """
+    CU21, CU22, CU23: Generación de Reportes Dinámicos
+    Modelo para almacenar reportes generados con filtros y exportaciones
+    """
+    TIPO_REPORTE_CHOICES = [
+        ('ventas', 'Reporte de Ventas'),
+        ('productos', 'Reporte de Productos'),
+        ('clientes', 'Reporte de Clientes'),
+        ('estadisticas', 'Estadísticas Generales'),
+        ('top_vendedores', 'Top Vendedores'),
+        ('tendencias', 'Análisis de Tendencias'),
+    ]
+    
+    FORMATO_CHOICES = [
+        ('pdf', 'PDF'),
+        ('excel', 'Excel'),
+        ('csv', 'CSV'),
+        ('json', 'JSON'),
+    ]
+    
+    ESTADO_CHOICES = [
+        ('generando', 'Generando'),
+        ('completado', 'Completado'),
+        ('error', 'Error'),
+        ('descargado', 'Descargado'),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.ForeignKey('authentication.Usuarios', models.CASCADE, related_name='reportes_generados')
+    
+    # Información del reporte
+    titulo = models.CharField(max_length=255, help_text="Título personalizado del reporte")
+    tipo_reporte = models.CharField(max_length=50, choices=TIPO_REPORTE_CHOICES, default='ventas')
+    formato = models.CharField(max_length=10, choices=FORMATO_CHOICES, default='pdf')
+    
+    # Filtros aplicados (JSON)
+    filtros = models.JSONField(default=dict, blank=True, help_text="Filtros aplicados al generar reporte")
+    
+    # Datos del reporte (JSON)
+    datos_reporte = models.JSONField(default=dict, blank=True, help_text="Datos del reporte en formato JSON")
+    
+    # Resumen (AI-Generated)
+    resumen_texto = models.TextField(blank=True, null=True, help_text="Resumen en texto del reporte (IA)")
+    resumen_voz = models.FileField(
+        upload_to='reportes/audio/', 
+        blank=True, 
+        null=True,
+        help_text="Resumen de audio del reporte (TTS)"
+    )
+    
+    # Archivos generados
+    archivo_pdf = models.FileField(upload_to='reportes/pdf/', blank=True, null=True)
+    archivo_excel = models.FileField(upload_to='reportes/excel/', blank=True, null=True)
+    archivo_csv = models.FileField(upload_to='reportes/csv/', blank=True, null=True)
+    
+    # Estado y control
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='generando')
+    error_mensaje = models.TextField(blank=True, null=True)
+    
+    # Metadatos
+    total_registros = models.IntegerField(default=0, help_text="Total de registros en el reporte")
+    tiempo_generacion = models.FloatField(default=0, help_text="Tiempo en segundos para generar el reporte")
+    
+    # Tracking
+    fecha_generacion = models.DateTimeField(auto_now_add=True)
+    fecha_ultimaDescarga = models.DateTimeField(blank=True, null=True)
+    descargas = models.IntegerField(default=0, help_text="Número de descargas del reporte")
+    
+    class Meta:
+        managed = True
+        db_table = 'reportes'
+        ordering = ['-fecha_generacion']
+        verbose_name = 'Reporte'
+        verbose_name_plural = 'Reportes'
+        indexes = [
+            models.Index(fields=['usuario', '-fecha_generacion']),
+            models.Index(fields=['tipo_reporte', 'estado']),
+        ]
+    
+    def __str__(self):
+        return f"{self.titulo} - {self.usuario.nombre if hasattr(self.usuario, 'nombre') else self.usuario} ({self.estado})"
+    
+    def marcar_completado(self):
+        """Marca el reporte como completado"""
+        self.estado = 'completado'
+        self.save()
+    
+    def marcar_descargado(self):
+        """Marca el reporte como descargado"""
+        self.estado = 'descargado'
+        self.descargas += 1
+        self.fecha_ultimaDescarga = timezone.now()
+        self.save()
+    
+    def registrar_error(self, error_msg):
+        """Registra error en generación"""
+        self.estado = 'error'
+        self.error_mensaje = error_msg
+        self.save()
+    
+    def get_archivo_por_formato(self):
+        """Retorna el archivo según el formato especificado"""
+        if self.formato == 'pdf':
+            return self.archivo_pdf
+        elif self.formato == 'excel':
+            return self.archivo_excel
+        elif self.formato == 'csv':
+            return self.archivo_csv
+        return None

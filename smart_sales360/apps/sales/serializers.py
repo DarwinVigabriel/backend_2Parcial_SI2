@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte
 from apps.authentication.models import DispositivosMoviles
 from apps.products.serializers import ProductoSerializer
 from apps.products.models import Productos
@@ -602,3 +602,171 @@ class NotificacionPushCreateSerializer(serializers.ModelSerializer):
             'usuario', 'cliente', 'venta', 'titulo', 'mensaje', 'tipo',
             'datos_adicionales'
         ]
+
+
+# ============================================================================
+# CU21, CU22, CU23: Serializers para Reportes Dinámicos y Exportación
+# ============================================================================
+
+class ReporteSerializer(serializers.ModelSerializer):
+    """
+    Serializer completo para Reportes (CU21, CU22, CU23)
+    """
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    tipo_reporte_display = serializers.CharField(source='get_tipo_reporte_display', read_only=True)
+    formato_display = serializers.CharField(source='get_formato_display', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    
+    class Meta:
+        model = Reporte
+        fields = [
+            'id', 'usuario', 'usuario_nombre', 'titulo', 'tipo_reporte', 'tipo_reporte_display',
+            'formato', 'formato_display', 'filtros', 'datos_reporte', 'resumen_texto',
+            'resumen_voz', 'archivo_pdf', 'archivo_excel', 'archivo_csv',
+            'estado', 'estado_display', 'error_mensaje', 'total_registros',
+            'tiempo_generacion', 'fecha_generacion', 'fecha_ultimaDescarga',
+            'descargas', 'created_at'
+        ]
+        read_only_fields = [
+            'id', 'usuario_nombre', 'datos_reporte', 'resumen_texto', 'resumen_voz',
+            'archivo_pdf', 'archivo_excel', 'archivo_csv', 'estado', 'error_mensaje',
+            'total_registros', 'tiempo_generacion', 'fecha_generacion', 'fecha_ultimaDescarga',
+            'descargas', 'created_at'
+        ]
+
+
+class ReporteGenerarSerializer(serializers.Serializer):
+    """
+    Serializer para generar nuevos reportes (CU21, CU22, CU23)
+    Permite especificar tipo de reporte, filtros y formato de salida
+    """
+    titulo = serializers.CharField(max_length=255, required=True, help_text="Título personalizado del reporte")
+    tipo_reporte = serializers.ChoiceField(
+        choices=Reporte.TIPO_REPORTE_CHOICES,
+        required=True,
+        help_text="Tipo de reporte a generar"
+    )
+    formato = serializers.ChoiceField(
+        choices=Reporte.FORMATO_CHOICES,
+        required=False,
+        default='pdf',
+        help_text="Formato de salida del reporte"
+    )
+    
+    # Filtros para reporte de ventas
+    fecha_inicio = serializers.DateField(required=False, allow_null=True, help_text="Fecha inicio del período")
+    fecha_fin = serializers.DateField(required=False, allow_null=True, help_text="Fecha fin del período")
+    
+    # Filtros por cliente
+    cliente_id = serializers.IntegerField(required=False, allow_null=True)
+    cliente_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="Array de IDs de clientes para filtrar"
+    )
+    
+    # Filtros por producto
+    producto_id = serializers.IntegerField(required=False, allow_null=True)
+    producto_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        help_text="Array de IDs de productos para filtrar"
+    )
+    
+    # Filtros por estado
+    estado_venta = serializers.CharField(required=False, allow_blank=True)
+    metodo_pago = serializers.CharField(required=False, allow_blank=True)
+    
+    # Opciones de generación
+    incluir_graficas = serializers.BooleanField(default=True, help_text="Incluir gráficas en el reporte")
+    incluir_resumen = serializers.BooleanField(default=True, help_text="Incluir resumen ejecutivo")
+    incluir_voz = serializers.BooleanField(default=False, help_text="Generar versión en voz (MP3)")
+    
+    # Agrupación (para análisis)
+    agrupar_por = serializers.ChoiceField(
+        choices=[
+            ('diario', 'Diario'),
+            ('semanal', 'Semanal'),
+            ('mensual', 'Mensual'),
+            ('cliente', 'Cliente'),
+            ('producto', 'Producto'),
+            ('vendedor', 'Vendedor'),
+        ],
+        required=False,
+        allow_blank=True,
+        help_text="Agrupación de datos para análisis"
+    )
+    
+    def validate(self, data):
+        """Validaciones adicionales"""
+        # Si se especifica cliente_id, no se puede especificar cliente_ids
+        if data.get('cliente_id') and data.get('cliente_ids'):
+            raise serializers.ValidationError(
+                "No se puede especificar cliente_id y cliente_ids simultáneamente"
+            )
+        
+        # Si se especifica producto_id, no se puede especificar producto_ids
+        if data.get('producto_id') and data.get('producto_ids'):
+            raise serializers.ValidationError(
+                "No se puede especificar producto_id y producto_ids simultáneamente"
+            )
+        
+        return data
+
+
+class ReporteListadoSerializer(serializers.ModelSerializer):
+    """
+    Serializer para listar reportes generados (CU21)
+    """
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    tipo_reporte_display = serializers.CharField(source='get_tipo_reporte_display', read_only=True)
+    formato_display = serializers.CharField(source='get_formato_display', read_only=True)
+    
+    class Meta:
+        model = Reporte
+        fields = [
+            'id', 'titulo', 'usuario_nombre', 'tipo_reporte', 'tipo_reporte_display',
+            'formato', 'formato_display', 'estado', 'total_registros', 'descargas',
+            'fecha_generacion', 'fecha_ultimaDescarga'
+        ]
+        read_only_fields = fields
+
+
+class ReporteExportarSerializer(serializers.Serializer):
+    """
+    Serializer para exportar/descargar reporte en diferentes formatos (CU23)
+    """
+    formato = serializers.ChoiceField(
+        choices=Reporte.FORMATO_CHOICES,
+        required=True,
+        help_text="Formato de exportación: pdf, excel, csv, json"
+    )
+    incluir_graficas = serializers.BooleanField(
+        default=True,
+        help_text="Incluir gráficas en PDF (solo aplica para PDF)"
+    )
+
+
+class ReporteVozSerializer(serializers.Serializer):
+    """
+    Serializer para generar resumen en voz del reporte (CU22)
+    """
+    velocidad = serializers.FloatField(
+        default=1.0,
+        min_value=0.5,
+        max_value=2.0,
+        help_text="Velocidad de reproducción (0.5 a 2.0)"
+    )
+    idioma = serializers.ChoiceField(
+        choices=[
+            ('es', 'Español'),
+            ('en', 'Inglés'),
+            ('fr', 'Francés'),
+        ],
+        default='es',
+        help_text="Idioma del resumen en voz"
+    )
+    regenerar = serializers.BooleanField(
+        default=False,
+        help_text="Forzar regeneración del audio si ya existe"
+    )

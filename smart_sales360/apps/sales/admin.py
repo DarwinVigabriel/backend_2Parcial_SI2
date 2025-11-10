@@ -5,7 +5,7 @@ from django.utils.html import format_html
 from django.contrib import messages
 from django.db import transaction
 from django.http import HttpResponse
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte
 
 
 class CartItemInline(admin.TabularInline):
@@ -784,4 +784,236 @@ class NotificacionPushAdmin(admin.ModelAdmin):
         updated = queryset.filter(estado='fallida').update(estado='pendiente', intentos=0)
         messages.info(request, f'{updated} notificación(es) preparada(s) para reintentar.')
     reintentar_envio.short_description = '🔄 Reintentar envío'
+
+
+# ============================================================================
+# CU21, CU22, CU23: Administración de Reportes Dinámicos
+# ============================================================================
+
+@admin.register(Reporte)
+class ReporteAdmin(admin.ModelAdmin):
+    """Admin para gestionar Reportes Dinámicos (CU21, CU22, CU23)"""
+    list_display = (
+        'titulo', 'usuario_nombre', 'tipo_reporte_display', 'formato_display',
+        'estado_badge', 'total_registros', 'descargas', 'fecha_generacion'
+    )
+    list_filter = ('tipo_reporte', 'formato', 'estado', 'fecha_generacion')
+    search_fields = ('titulo', 'usuario__nombre', 'resumen_texto')
+    readonly_fields = (
+        'id', 'usuario', 'estado', 'total_registros', 'tiempo_generacion',
+        'fecha_generacion', 'fecha_ultimaDescarga', 'descargas',
+        'datos_reporte_preview', 'archivo_pdf_preview', 'archivo_excel_preview',
+        'resumen_voz_preview', 'error_mensaje'
+    )
+    
+    fieldsets = (
+        ('Información General', {
+            'fields': ('titulo', 'usuario', 'tipo_reporte', 'formato', 'estado')
+        }),
+        ('Configuración', {
+            'fields': ('filtros',)
+        }),
+        ('Contenido', {
+            'fields': ('resumen_texto', 'resumen_voz_preview'),
+            'classes': ('collapse',)
+        }),
+        ('Datos del Reporte', {
+            'fields': ('datos_reporte_preview', 'total_registros'),
+            'classes': ('collapse',)
+        }),
+        ('Archivos Generados', {
+            'fields': ('archivo_pdf_preview', 'archivo_excel_preview', 'archivo_csv'),
+            'classes': ('collapse',)
+        }),
+        ('Estadísticas', {
+            'fields': ('tiempo_generacion', 'descargas', 'fecha_ultimaDescarga')
+        }),
+        ('Errores', {
+            'fields': ('error_mensaje',),
+            'classes': ('collapse',)
+        }),
+        ('Auditoría', {
+            'fields': ('fecha_generacion',),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['descargar_pdf', 'descargar_excel', 'generar_voz', 'regenerar_reportes']
+    date_hierarchy = 'fecha_generacion'
+    
+    def usuario_nombre(self, obj):
+        return obj.usuario.nombre if hasattr(obj.usuario, 'nombre') else str(obj.usuario)
+    usuario_nombre.short_description = 'Usuario'
+    
+    def tipo_reporte_display(self, obj):
+        return obj.get_tipo_reporte_display()
+    tipo_reporte_display.short_description = 'Tipo'
+    
+    def formato_display(self, obj):
+        return obj.get_formato_display()
+    formato_display.short_description = 'Formato'
+    
+    def estado_badge(self, obj):
+        colors = {
+            'generando': '#ffc107',
+            'completado': '#28a745',
+            'error': '#dc3545',
+            'descargado': '#17a2b8'
+        }
+        color = colors.get(obj.estado, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 3px;">{}</span>',
+            color, obj.get_estado_display()
+        )
+    estado_badge.short_description = 'Estado'
+    
+    def datos_reporte_preview(self, obj):
+        """Vista previa de los datos del reporte en JSON"""
+        if obj.datos_reporte:
+            import json
+            datos_str = json.dumps(obj.datos_reporte, indent=2, ensure_ascii=False)[:500]
+            return format_html('<pre style="max-height: 300px; overflow-y: auto;">{}</pre>', datos_str)
+        return '-'
+    datos_reporte_preview.short_description = 'Vista Previa Datos'
+    
+    def archivo_pdf_preview(self, obj):
+        """Link para descargar PDF si existe"""
+        if obj.archivo_pdf and obj.archivo_pdf.name:
+            return format_html(
+                '<a class="button" href="{}">📥 Descargar PDF</a>',
+                obj.archivo_pdf.url
+            )
+        return format_html('<span style="color: gray;">No disponible</span>')
+    archivo_pdf_preview.short_description = 'PDF'
+    
+    def archivo_excel_preview(self, obj):
+        """Link para descargar Excel si existe"""
+        if obj.archivo_excel and obj.archivo_excel.name:
+            return format_html(
+                '<a class="button" href="{}">📥 Descargar Excel</a>',
+                obj.archivo_excel.url
+            )
+        return format_html('<span style="color: gray;">No disponible</span>')
+    archivo_excel_preview.short_description = 'Excel'
+    
+    def resumen_voz_preview(self, obj):
+        """Reproductor de audio si existe"""
+        if obj.resumen_voz and obj.resumen_voz.name:
+            return format_html(
+                '<audio controls style="width: 100%; max-width: 300px;"><source src="{}" type="audio/mpeg">Tu navegador no soporta audio.</audio>',
+                obj.resumen_voz.url
+            )
+        return format_html('<span style="color: gray;">No disponible</span>')
+    resumen_voz_preview.short_description = 'Audio'
+    
+    def descargar_pdf(self, request, queryset):
+        """Acción para descargar reportes en PDF"""
+        count = 0
+        for reporte in queryset:
+            if reporte.archivo_pdf and reporte.archivo_pdf.name:
+                count += 1
+        
+        if count:
+            messages.info(request, f'{count} reporte(s) disponible(s) para descargar como PDF')
+        else:
+            messages.warning(request, 'Ninguno de los reportes seleccionados tiene PDF generado')
+    descargar_pdf.short_description = '📥 Descargar PDF'
+    
+    def descargar_excel(self, request, queryset):
+        """Acción para descargar reportes en Excel"""
+        count = 0
+        for reporte in queryset:
+            if reporte.archivo_excel and reporte.archivo_excel.name:
+                count += 1
+        
+        if count:
+            messages.info(request, f'{count} reporte(s) disponible(s) para descargar como Excel')
+        else:
+            messages.warning(request, 'Ninguno de los reportes seleccionados tiene Excel generado')
+    descargar_excel.short_description = '📊 Descargar Excel'
+    
+    def generar_voz(self, request, queryset):
+        """Acción para generar versión de voz de reportes"""
+        count = 0
+        for reporte in queryset:
+            if reporte.resumen_texto and not reporte.resumen_voz:
+                count += 1
+        
+        if count:
+            messages.success(request, f'{count} reporte(s) preparado(s) para generar voz')
+    generar_voz.short_description = '🔊 Generar Versión de Voz'
+    
+    def regenerar_reportes(self, request, queryset):
+        """Acción para regenerar reportes"""
+        updated = 0
+        for reporte in queryset:
+            if reporte.estado == 'error':
+                reporte.estado = 'generando'
+                reporte.error_mensaje = ''
+                reporte.save()
+                updated += 1
+        
+        messages.success(request, f'{updated} reporte(s) preparado(s) para regenerar')
+    regenerar_reportes.short_description = '🔄 Regenerar Reportes'
+    
+    def get_urls(self):
+        """Agrega URLs personalizadas"""
+        urls = super().get_urls()
+        custom_urls = [
+            path('generar-nuevo/', self.admin_site.admin_view(self.generar_nuevo_reporte_view),
+                 name='sales_reporte_generar_nuevo'),
+        ]
+        return custom_urls + urls
+    
+    def generar_nuevo_reporte_view(self, request):
+        """Vista para generar un nuevo reporte desde el admin"""
+        if request.method == 'POST':
+            titulo = request.POST.get('titulo')
+            tipo_reporte = request.POST.get('tipo_reporte')
+            formato = request.POST.get('formato', 'pdf')
+            incluir_voz = request.POST.get('incluir_voz') == 'on'
+            
+            fecha_inicio = request.POST.get('fecha_inicio')
+            fecha_fin = request.POST.get('fecha_fin')
+            cliente_id = request.POST.get('cliente_id')
+            
+            try:
+                # Construir filtros
+                filtros = {}
+                if fecha_inicio:
+                    filtros['fecha_inicio'] = fecha_inicio
+                if fecha_fin:
+                    filtros['fecha_fin'] = fecha_fin
+                if cliente_id:
+                    filtros['cliente_id'] = cliente_id
+                
+                # Crear reporte
+                reporte = Reporte.objects.create(
+                    usuario=request.user.usuarios if hasattr(request.user, 'usuarios') else None,
+                    titulo=titulo,
+                    tipo_reporte=tipo_reporte,
+                    formato=formato,
+                    filtros=filtros,
+                    estado='generando'
+                )
+                
+                messages.success(request, f'Reporte "{reporte.titulo}" creado exitosamente')
+                return redirect('admin:sales_reporte_change', reporte.id)
+            
+            except Exception as e:
+                messages.error(request, f'Error al crear reporte: {str(e)}')
+        
+        # GET: mostrar formulario
+        from apps.clients.models import Clientes
+        clientes = Clientes.objects.filter(activo=True)
+        
+        context = {
+            **self.admin_site.each_context(request),
+            'title': 'Generar Nuevo Reporte',
+            'tipos_reporte': Reporte.TIPO_REPORTE_CHOICES,
+            'formatos': Reporte.FORMATO_CHOICES,
+            'clientes': clientes,
+            'opts': self.model._meta,
+        }
+        return render(request, 'admin/sales/generar_reporte.html', context)
 
