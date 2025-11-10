@@ -28,7 +28,7 @@ except ImportError:
     FUZZ_AVAILABLE = False
     print("⚠️ TheFuzz no está instalado. Instala con: pip install thefuzz python-Levenshtein")
 
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion, ReporteVozMovil, CompartirReporte, PreferenciaNotificaciones, SincronizacionDatos
 from apps.authentication.models import DispositivosMoviles
 from .serializers import (
     CartSerializer, 
@@ -58,7 +58,15 @@ from .serializers import (
     ModeloIASerializer,
     ModeloIAEntrenarSerializer,
     PrediccionSerializer,
-    PrediccionListadoSerializer
+    PrediccionListadoSerializer,
+    ReporteVozMovilSerializer,
+    ReporteVozMovilCreateSerializer,
+    CompartirReporteSerializer,
+    CompartirReporteCreateSerializer,
+    PreferenciaNotificacionesSerializer,
+    PreferenciaNotificacionesUpdateSerializer,
+    SincronizacionDatosSerializer,
+    SincronizacionDatosCreateSerializer
 )
 from apps.products.models import Productos
 
@@ -2881,4 +2889,436 @@ class PrediccionViewSet(viewsets.ModelViewSet):
             'tendencia': tendencia,
             'periodo_analisis': f'{fecha_hoy} a {fecha_futuro}',
             'predicciones': PrediccionListadoSerializer(predicciones, many=True).data
+        })
+
+
+# ============================================================================
+# CU27: ViewSet para Reportes por Voz en Móvil
+# ============================================================================
+
+class ReporteVozMovilViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para gestionar Reportes por Voz en Móvil (CU27)
+    Endpoints:
+    - GET /api/sales/reportes-voz-movil/ - Listar reportes
+    - POST /reportes-voz-movil/ - Crear reporte por voz
+    - POST /reportes-voz-movil/{id}/procesar/ - Procesar grabación y transcribir
+    - POST /reportes-voz-movil/{id}/marcar_favorito/ - Guardar como favorito
+    - GET /reportes-voz-movil/favoritos/ - Listar favoritos
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+    
+    def get_queryset(self):
+        """Mostrar solo reportes del usuario autenticado"""
+        return ReporteVozMovil.objects.filter(usuario=self.request.user)
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return ReporteVozMovilCreateSerializer
+        return ReporteVozMovilSerializer
+    
+    def perform_create(self, serializer):
+        """Asignar usuario al crear reporte"""
+        serializer.save(usuario=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def procesar(self, request, pk=None):
+        """Procesar grabación: reconocimiento de voz y generación de reporte (CU27)"""
+        reporte_voz = self.get_object()
+        
+        try:
+            # Actualizar estado
+            reporte_voz.estado = 'procesando'
+            reporte_voz.save()
+            
+            # Simular transcripción (en producción usar Vosk o API externa)
+            if reporte_voz.archivo_audio:
+                reporte_voz.transcripcion = f"Reporte generado desde: {reporte_voz.archivo_audio.name}"
+                reporte_voz.confianza_transcripcion = 0.95
+                reporte_voz.comando_detectado = 'generar_reporte_ventas'
+                reporte_voz.parametros_extraidos = {
+                    'periodo': 'mensual',
+                    'tipo': 'ventas',
+                    'formato': 'pdf'
+                }
+            
+            # Crear reporte asociado
+            reporte = Reporte.objects.create(
+                usuario=request.user,
+                titulo=f"Reporte por Voz - {timezone.now().strftime('%d/%m/%Y')}",
+                tipo_reporte='ventas',
+                formato='pdf',
+                contenido='{}',
+                filtros=reporte_voz.parametros_extraidos
+            )
+            
+            reporte_voz.reporte_asociado = reporte
+            reporte_voz.estado = 'completado'
+            reporte_voz.fecha_procesamiento = timezone.now()
+            reporte_voz.save()
+            
+            serializer = self.get_serializer(reporte_voz)
+            return Response({
+                'message': 'Reporte procesado exitosamente',
+                'reporte_voz': serializer.data,
+                'reporte_creado': {
+                    'id': reporte.id,
+                    'titulo': reporte.titulo
+                }
+            }, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            reporte_voz.estado = 'error'
+            reporte_voz.save()
+            return Response({
+                'error': f'Error al procesar reporte: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def marcar_favorito(self, request, pk=None):
+        """Marcar comando de voz como favorito"""
+        reporte_voz = self.get_object()
+        reporte_voz.marcar_como_favorito()
+        return Response({
+            'message': 'Comando guardado como favorito',
+            'es_favorito': reporte_voz.es_favorito
+        })
+    
+    @action(detail=False, methods=['get'])
+    def favoritos(self, request):
+        """Obtener comandos guardados como favoritos"""
+        favoritos = self.get_queryset().filter(es_favorito=True)
+        serializer = self.get_serializer(favoritos, many=True)
+        return Response({
+            'total': favoritos.count(),
+            'favoritos': serializer.data
+        })
+
+
+# ============================================================================
+# CU28: ViewSet para Compartir Reportes desde Móvil
+# ============================================================================
+
+class CompartirReporteViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para Compartir Reportes (CU28)
+    Endpoints:
+    - GET /api/sales/compartir-reportes/ - Listar comparticiones
+    - POST /compartir-reportes/ - Crear compartición
+    - POST /compartir-reportes/{id}/reenviar/ - Reenviar reporte
+    - POST /compartir-reportes/{id}/generar_link/ - Generar link público
+    - GET /compartir-reportes/{id}/estado/ - Ver estado del envío
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Mostrar solo comparticiones del usuario"""
+        return CompartirReporte.objects.filter(usuario_origen=self.request.user)
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CompartirReporteCreateSerializer
+        return CompartirReporteSerializer
+    
+    def perform_create(self, serializer):
+        """Asignar usuario origen al crear compartición"""
+        serializer.save(usuario_origen=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def reenviar(self, request, pk=None):
+        """Reenviar compartición de reporte"""
+        comparticion = self.get_object()
+        
+        try:
+            comparticion.estado = 'enviando'
+            comparticion.intentos_envio += 1
+            comparticion.save()
+            
+            # Simular envío
+            import time
+            time.sleep(1)
+            
+            comparticion.estado = 'enviado'
+            comparticion.fecha_envio_exitoso = timezone.now()
+            comparticion.save()
+            
+            return Response({
+                'message': 'Reporte reenviado exitosamente',
+                'intentos': comparticion.intentos_envio,
+                'fecha_envio': comparticion.fecha_envio_exitoso
+            })
+        except Exception as e:
+            comparticion.estado = 'fallido'
+            comparticion.error_mensaje = str(e)
+            comparticion.save()
+            return Response({
+                'error': f'Error al reenviar: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def generar_link(self, request, pk=None):
+        """Generar link público para compartir reporte"""
+        import uuid
+        comparticion = self.get_object()
+        
+        try:
+            comparticion.token_publico = str(uuid.uuid4())
+            comparticion.fecha_expiracion_link = timezone.now() + timezone.timedelta(days=7)
+            comparticion.save()
+            
+            link_publico = f"/api/sales/compartir-reportes/{comparticion.token_publico}/"
+            
+            return Response({
+                'message': 'Link público generado',
+                'link': link_publico,
+                'expira_en': comparticion.fecha_expiracion_link,
+                'token': comparticion.token_publico
+            })
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['get'])
+    def estado(self, request, pk=None):
+        """Obtener estado actual de la compartición"""
+        comparticion = self.get_object()
+        return Response({
+            'id': comparticion.id,
+            'estado': comparticion.get_estado_display(),
+            'metodo': comparticion.get_metodo_display(),
+            'intentos_envio': comparticion.intentos_envio,
+            'fecha_envio': comparticion.fecha_envio_exitoso,
+            'error': comparticion.error_mensaje
+        })
+
+
+# ============================================================================
+# CU29: ViewSet para Preferencias de Notificaciones
+# ============================================================================
+
+class PreferenciaNotificacionesViewSet(viewsets.ViewSet):
+    """
+    ViewSet para Preferencias de Notificaciones (CU29)
+    Endpoints:
+    - GET /api/sales/preferencias-notificaciones/ - Obtener preferencias
+    - PUT /preferencias-notificaciones/ - Actualizar preferencias
+    - POST /preferencias-notificaciones/reset/ - Restablecer a valores por defecto
+    - POST /preferencias-notificaciones/en_silencio/ - Verificar si está en horario silencioso
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def list(self, request):
+        """Obtener preferencias del usuario"""
+        try:
+            preferencias = PreferenciaNotificaciones.objects.get(usuario=request.user)
+            serializer = PreferenciaNotificacionesSerializer(preferencias)
+            return Response(serializer.data)
+        except PreferenciaNotificaciones.DoesNotExist:
+            # Crear preferencias por defecto
+            preferencias = PreferenciaNotificaciones.objects.create(usuario=request.user)
+            serializer = PreferenciaNotificacionesSerializer(preferencias)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    def update(self, request):
+        """Actualizar preferencias del usuario"""
+        try:
+            preferencias = PreferenciaNotificaciones.objects.get(usuario=request.user)
+            serializer = PreferenciaNotificacionesUpdateSerializer(
+                preferencias, data=request.data, partial=True
+            )
+            if serializer.is_valid():
+                serializer.save()
+                return Response({
+                    'message': 'Preferencias actualizadas',
+                    'preferencias': PreferenciaNotificacionesSerializer(preferencias).data
+                })
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except PreferenciaNotificaciones.DoesNotExist:
+            return Response({
+                'error': 'Preferencias no encontradas'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['post'])
+    def reset(self, request):
+        """Restablecer preferencias a valores por defecto"""
+        try:
+            preferencias = PreferenciaNotificaciones.objects.get(usuario=request.user)
+            
+            # Restablecer a valores por defecto
+            preferencias.notificaciones_activas = True
+            preferencias.frecuencia_general = 'diaria'
+            preferencias.config_tipos = {}
+            preferencias.canales_habilitados = ['push', 'email']
+            preferencias.horario_silencio_activo = False
+            preferencias.palabras_clave_filtro = []
+            preferencias.save()
+            
+            return Response({
+                'message': 'Preferencias restablecidas',
+                'preferencias': PreferenciaNotificacionesSerializer(preferencias).data
+            })
+        except PreferenciaNotificaciones.DoesNotExist:
+            return Response({
+                'error': 'Preferencias no encontradas'
+            }, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=False, methods=['post'])
+    def en_silencio(self, request):
+        """Verificar si el usuario está en horario silencioso"""
+        try:
+            preferencias = PreferenciaNotificaciones.objects.get(usuario=request.user)
+            en_silencio = preferencias.esta_en_horario_silencio()
+            
+            return Response({
+                'en_silencio': en_silencio,
+                'horario_silencio_activo': preferencias.horario_silencio_activo,
+                'inicio': str(preferencias.horario_silencio_inicio),
+                'fin': str(preferencias.horario_silencio_fin)
+            })
+        except PreferenciaNotificaciones.DoesNotExist:
+            return Response({
+                'error': 'Preferencias no encontradas'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+# ============================================================================
+# CU30: ViewSet para Sincronización de Datos Offline/Online
+# ============================================================================
+
+class SincronizacionDatosViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para Sincronización de Datos (CU30)
+    Endpoints:
+    - GET /api/sales/sincronizacion/ - Listar sincronizaciones
+    - POST /sincronizacion/ - Crear solicitud de sincronización
+    - POST /sincronizacion/{id}/iniciar/ - Iniciar sincronización
+    - POST /sincronizacion/{id}/resolver_conflicto/ - Resolver conflicto
+    - GET /sincronizacion/{id}/estado/ - Obtener estado
+    - GET /sincronizacion/{id}/velocidad/ - Obtener velocidad de sincronización
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Mostrar solo sincronizaciones del usuario"""
+        return SincronizacionDatos.objects.filter(usuario=self.request.user)
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return SincronizacionDatosCreateSerializer
+        return SincronizacionDatosSerializer
+    
+    def perform_create(self, serializer):
+        """Asignar usuario al crear sincronización"""
+        serializer.save(usuario=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def iniciar(self, request, pk=None):
+        """Iniciar sincronización de datos"""
+        sincro = self.get_object()
+        
+        try:
+            sincro.estado = 'sincronizando'
+            sincro.fecha_inicio_sincro = timezone.now()
+            sincro.progreso_porcentaje = 0
+            sincro.save()
+            
+            # Simular sincronización
+            import time, random
+            for i in range(1, 101):
+                time.sleep(0.01)
+                sincro.progreso_porcentaje = i
+                if i == 50:
+                    sincro.log_sincro.append({'evento': 'Mitad del proceso', 'timestamp': str(timezone.now())})
+            
+            # Verificar conflictos
+            tiene_conflicto = random.choice([True, False])
+            if tiene_conflicto:
+                sincro.tiene_conflicto = True
+                sincro.datos_conflictivos = {
+                    'tabla': sincro.tipo_dato,
+                    'registros': ['id_1', 'id_2']
+                }
+                sincro.estado = 'conflicto'
+            else:
+                sincro.estado = 'completado'
+                sincro.fecha_fin_sincro = timezone.now()
+                sincro.tiempo_sincro_ms = int((sincro.fecha_fin_sincro - sincro.fecha_inicio_sincro).total_seconds() * 1000)
+            
+            # Datos simulados
+            sincro.tamaño_descarga_kb = random.randint(100, 5000)
+            sincro.save()
+            
+            serializer = self.get_serializer(sincro)
+            return Response({
+                'message': 'Sincronización iniciada',
+                'sincronizacion': serializer.data
+            })
+        
+        except Exception as e:
+            sincro.estado = 'fallido'
+            sincro.error_mensaje = str(e)
+            sincro.save()
+            return Response({
+                'error': f'Error en sincronización: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def resolver_conflicto(self, request, pk=None):
+        """Resolver conflicto de sincronización"""
+        sincro = self.get_object()
+        
+        try:
+            resolucion = request.data.get('resolucion', 'servidor')  # servidor, dispositivo, manual
+            
+            if resolucion not in ['servidor', 'dispositivo', 'manual']:
+                return Response({
+                    'error': 'Resolución inválida. Opciones: servidor, dispositivo, manual'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            sincro.resolucion_conflicto = resolucion
+            sincro.tiene_conflicto = False
+            sincro.estado = 'completado'
+            sincro.fecha_fin_sincro = timezone.now()
+            sincro.tiempo_sincro_ms = int((sincro.fecha_fin_sincro - sincro.fecha_inicio_sincro).total_seconds() * 1000)
+            sincro.save()
+            
+            return Response({
+                'message': f'Conflicto resuelto usando: {resolucion}',
+                'sincronizacion': SincronizacionDatosSerializer(sincro).data
+            })
+        
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['get'])
+    def estado(self, request, pk=None):
+        """Obtener estado actual de sincronización"""
+        sincro = self.get_object()
+        return Response({
+            'id': sincro.id,
+            'estado': sincro.get_estado_display(),
+            'progreso': sincro.progreso_porcentaje,
+            'dispositivo': sincro.get_dispositivo_display(),
+            'tipo_dato': sincro.get_tipo_dato_display(),
+            'fecha_inicio': sincro.fecha_inicio_sincro,
+            'cantidad_registros': sincro.cantidad_registros,
+            'tiene_conflicto': sincro.tiene_conflicto,
+            'error': sincro.error_mensaje
+        })
+    
+    @action(detail=True, methods=['get'])
+    def velocidad(self, request, pk=None):
+        """Obtener velocidad de sincronización"""
+        sincro = self.get_object()
+        velocidad = sincro.calcular_velocidad_sincro()
+        
+        return Response({
+            'velocidad_kb_s': round(velocidad, 2),
+            'tamaño_descarga_kb': sincro.tamaño_descarga_kb,
+            'tiempo_ms': sincro.tiempo_sincro_ms,
+            'tiempo_segundos': sincro.tiempo_sincro_ms / 1000
         })

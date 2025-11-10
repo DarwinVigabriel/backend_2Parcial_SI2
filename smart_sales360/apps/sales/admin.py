@@ -6,8 +6,8 @@ from django.contrib import messages
 from django.db import transaction
 from django.http import HttpResponse
 from django.utils import timezone
-from django.db.models import Sum
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion
+from django.db.models import Sum, F
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion, ReporteVozMovil, CompartirReporte, PreferenciaNotificaciones, SincronizacionDatos
 
 
 class CartItemInline(admin.TabularInline):
@@ -1264,4 +1264,428 @@ class PrediccionAdmin(admin.ModelAdmin):
         
         messages.success(request, 'Valores reales registrados')
     registrar_valor_real.short_description = '📊 Registrar Valor Real'
+
+
+# ============================================================================
+# CU27: Administración de Reportes por Voz en Móvil
+# ============================================================================
+
+@admin.register(ReporteVozMovil)
+class ReporteVozMovilAdmin(admin.ModelAdmin):
+    """Admin para gestionar Reportes por Voz en Móvil (CU27)"""
+    list_display = (
+        'usuario_nombre', 'duracion_segundos', 'confianza_badge', 'calidad_audio',
+        'estado_badge', 'es_favorito_icon', 'creado_en'
+    )
+    list_filter = ('estado', 'calidad_audio', 'es_favorito', 'idioma_detectado', 'creado_en')
+    search_fields = ('usuario__nombre', 'transcripcion', 'comando_detectado')
+    readonly_fields = (
+        'transcripcion', 'confianza_transcripcion', 'comando_detectado',
+        'parametros_extraidos', 'fecha_procesamiento', 'creado_en'
+    )
+    
+    fieldsets = (
+        ('Información', {
+            'fields': ('usuario', 'archivo_audio', 'duracion_segundos')
+        }),
+        ('Grabación', {
+            'fields': ('idioma_detectado', 'calidad_audio', 'confianza_transcripcion')
+        }),
+        ('Procesamiento de Voz', {
+            'fields': ('transcripcion', 'comando_detectado', 'parametros_extraidos')
+        }),
+        ('Reporte', {
+            'fields': ('reporte_asociado', 'es_favorito', 'estado')
+        }),
+        ('Auditoría', {
+            'fields': ('creado_en', 'fecha_procesamiento'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['procesar_reportes', 'marcar_favoritos', 'desactivar_reportes']
+    
+    def usuario_nombre(self, obj):
+        return obj.usuario.nombre if hasattr(obj.usuario, 'nombre') else str(obj.usuario)
+    usuario_nombre.short_description = 'Usuario'
+    
+    def confianza_badge(self, obj):
+        porcentaje = obj.confianza_transcripcion * 100
+        if porcentaje >= 90:
+            color = '#28a745'
+        elif porcentaje >= 70:
+            color = '#ffc107'
+        else:
+            color = '#dc3545'
+        
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 3px;">{:.0f}%</span>',
+            color, porcentaje
+        )
+    confianza_badge.short_description = 'Confianza'
+    
+    def estado_badge(self, obj):
+        colores = {'grabando': '#17a2b8', 'procesando': '#ffc107', 'completado': '#28a745', 'error': '#dc3545'}
+        color = colores.get(obj.estado, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 3px;">{}</span>',
+            color, obj.get_estado_display()
+        )
+    estado_badge.short_description = 'Estado'
+    
+    def es_favorito_icon(self, obj):
+        return '⭐ Sí' if obj.es_favorito else '☆ No'
+    es_favorito_icon.short_description = 'Favorito'
+    
+    def procesar_reportes(self, request, queryset):
+        updated = queryset.filter(estado='grabando').update(estado='procesando')
+        messages.info(request, f'{updated} reporte(s) en procesamiento')
+    procesar_reportes.short_description = '⚙️ Procesar Reportes'
+    
+    def marcar_favoritos(self, request, queryset):
+        updated = queryset.update(es_favorito=True)
+        messages.success(request, f'{updated} reporte(s) marcado(s) como favorito')
+    marcar_favoritos.short_description = '⭐ Marcar como Favorito'
+    
+    def desactivar_reportes(self, request, queryset):
+        updated = queryset.update(estado='error')
+        messages.warning(request, f'{updated} reporte(s) desactivado(s)')
+    desactivar_reportes.short_description = '❌ Desactivar'
+
+
+# ============================================================================
+# CU28: Administración de Compartición de Reportes
+# ============================================================================
+
+@admin.register(CompartirReporte)
+class CompartirReporteAdmin(admin.ModelAdmin):
+    """Admin para gestionar Comparticiones de Reportes (CU28)"""
+    list_display = (
+        'reporte_titulo', 'usuario_origen_nombre', 'metodo_badge', 'estado_badge',
+        'intentos_envio', 'fecha_envio_exitoso', 'creado_en'
+    )
+    list_filter = ('metodo', 'estado', 'creado_en', 'incluir_datos_sensibles')
+    search_fields = ('reporte__titulo', 'usuario_origen__nombre', 'destinatarios')
+    readonly_fields = (
+        'fecha_envio_exitoso', 'creado_en', 'actualizado_en', 'error_mensaje',
+        'token_publico', 'destinatarios_preview'
+    )
+    
+    fieldsets = (
+        ('Información', {
+            'fields': ('reporte', 'usuario_origen', 'creado_en')
+        }),
+        ('Compartición', {
+            'fields': ('metodo', 'destinatarios_preview', 'mensaje_personalizado')
+        }),
+        ('Opciones', {
+            'fields': ('incluir_graficos', 'incluir_datos_sensibles')
+        }),
+        ('Estado del Envío', {
+            'fields': ('estado', 'intentos_envio', 'fecha_envio_exitoso', 'error_mensaje')
+        }),
+        ('Link Público', {
+            'fields': ('token_publico', 'fecha_expiracion_link'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['reenviar_reportes', 'generar_links_publicos', 'marcar_como_enviado']
+    
+    def reporte_titulo(self, obj):
+        return obj.reporte.titulo
+    reporte_titulo.short_description = 'Reporte'
+    
+    def usuario_origen_nombre(self, obj):
+        return obj.usuario_origen.nombre if hasattr(obj.usuario_origen, 'nombre') else str(obj.usuario_origen)
+    usuario_origen_nombre.short_description = 'Usuario'
+    
+    def metodo_badge(self, obj):
+        iconos = {
+            'email': '📧',
+            'whatsapp': '💬',
+            'sms': '📱',
+            'facebook': '👍',
+            'link_publico': '🔗'
+        }
+        icono = iconos.get(obj.metodo, '📤')
+        return f"{icono} {obj.get_metodo_display()}"
+    metodo_badge.short_description = 'Método'
+    
+    def estado_badge(self, obj):
+        colores = {
+            'pendiente': '#ffc107',
+            'enviando': '#17a2b8',
+            'enviado': '#28a745',
+            'fallido': '#dc3545'
+        }
+        color = colores.get(obj.estado, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 3px;">{}</span>',
+            color, obj.get_estado_display()
+        )
+    estado_badge.short_description = 'Estado'
+    
+    def destinatarios_preview(self, obj):
+        return format_html('<pre>{}</pre>', str(obj.destinatarios)[:200])
+    destinatarios_preview.short_description = 'Destinatarios'
+    
+    def reenviar_reportes(self, request, queryset):
+        updated = queryset.exclude(estado='enviado').update(estado='enviando', intentos_envio=F('intentos_envio')+1)
+        messages.info(request, f'{updated} reporte(s) reenviado(s)')
+    reenviar_reportes.short_description = '🔄 Reenviar'
+    
+    def generar_links_publicos(self, request, queryset):
+        import uuid
+        count = 0
+        for comparticion in queryset:
+            comparticion.token_publico = str(uuid.uuid4())
+            comparticion.fecha_expiracion_link = timezone.now() + timezone.timedelta(days=7)
+            comparticion.save()
+            count += 1
+        messages.success(request, f'{count} link(s) público(s) generado(s)')
+    generar_links_publicos.short_description = '🔗 Generar Links Públicos'
+    
+    def marcar_como_enviado(self, request, queryset):
+        updated = queryset.update(estado='enviado', fecha_envio_exitoso=timezone.now())
+        messages.success(request, f'{updated} reporte(s) marcado(s) como enviado')
+    marcar_como_enviado.short_description = '✓ Marcar como Enviado'
+
+
+# ============================================================================
+# CU29: Administración de Preferencias de Notificaciones
+# ============================================================================
+
+@admin.register(PreferenciaNotificaciones)
+class PreferenciaNotificacionesAdmin(admin.ModelAdmin):
+    """Admin para gestionar Preferencias de Notificaciones (CU29)"""
+    list_display = (
+        'usuario_nombre', 'notificaciones_activas_icon', 'frecuencia_general',
+        'canales_display', 'horario_silencio_badge', 'actualizado_en'
+    )
+    list_filter = ('notificaciones_activas', 'frecuencia_general', 'horario_silencio_activo')
+    search_fields = ('usuario__nombre',)
+    readonly_fields = ('creado_en', 'actualizado_en')
+    
+    fieldsets = (
+        ('Usuario', {
+            'fields': ('usuario',)
+        }),
+        ('Estado General', {
+            'fields': ('notificaciones_activas', 'frecuencia_general')
+        }),
+        ('Canales', {
+            'fields': ('canales_habilitados',)
+        }),
+        ('Horario Silencioso', {
+            'fields': ('horario_silencio_activo', 'horario_silencio_inicio', 'horario_silencio_fin')
+        }),
+        ('Filtros', {
+            'fields': ('palabras_clave_filtro', 'config_tipos'),
+            'classes': ('collapse',)
+        }),
+        ('Auditoría', {
+            'fields': ('creado_en', 'actualizado_en'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['activar_notificaciones', 'desactivar_notificaciones', 'establecer_silencio']
+    
+    def usuario_nombre(self, obj):
+        return obj.usuario.nombre if hasattr(obj.usuario, 'nombre') else str(obj.usuario)
+    usuario_nombre.short_description = 'Usuario'
+    
+    def notificaciones_activas_icon(self, obj):
+        return '✓ Activas' if obj.notificaciones_activas else '✕ Inactivas'
+    notificaciones_activas_icon.short_description = 'Estado'
+    
+    def canales_display(self, obj):
+        canales = ', '.join(obj.canales_habilitados) if obj.canales_habilitados else 'Ninguno'
+        return canales
+    canales_display.short_description = 'Canales'
+    
+    def horario_silencio_badge(self, obj):
+        if obj.horario_silencio_activo:
+            return format_html(
+                '<span style="background-color: #ffc107; color: white; padding: 3px 10px; border-radius: 3px;">🔇 {}-{}</span>',
+                obj.horario_silencio_inicio, obj.horario_silencio_fin
+            )
+        return '❌ Desactivado'
+    horario_silencio_badge.short_description = 'Horario Silencioso'
+    
+    def activar_notificaciones(self, request, queryset):
+        updated = queryset.update(notificaciones_activas=True)
+        messages.success(request, f'Notificaciones activadas para {updated} usuario(s)')
+    activar_notificaciones.short_description = '✓ Activar Notificaciones'
+    
+    def desactivar_notificaciones(self, request, queryset):
+        updated = queryset.update(notificaciones_activas=False)
+        messages.warning(request, f'Notificaciones desactivadas para {updated} usuario(s)')
+    desactivar_notificaciones.short_description = '✕ Desactivar Notificaciones'
+    
+    def establecer_silencio(self, request, queryset):
+        updated = queryset.update(horario_silencio_activo=True)
+        messages.info(request, f'Horario silencioso activado para {updated} usuario(s)')
+    establecer_silencio.short_description = '🔇 Activar Horario Silencioso'
+
+
+# ============================================================================
+# CU30: Administración de Sincronización de Datos
+# ============================================================================
+
+@admin.register(SincronizacionDatos)
+class SincronizacionDatosAdmin(admin.ModelAdmin):
+    """Admin para gestionar Sincronización de Datos (CU30)"""
+    list_display = (
+        'usuario_nombre', 'dispositivo_nombre', 'tipo_dato_badge', 'estado_badge',
+        'progreso_barra', 'tamaño_descarga_display', 'velocidad_display', 'creado_en'
+    )
+    list_filter = ('estado', 'dispositivo', 'tipo_dato', 'tiene_conflicto', 'creado_en')
+    search_fields = ('usuario__nombre', 'device_name', 'device_id')
+    readonly_fields = (
+        'progreso_barra_readonly', 'velocidad_calc', 'log_sincro_preview',
+        'tiempo_transcurrido', 'creado_en', 'actualizado_en'
+    )
+    
+    fieldsets = (
+        ('Dispositivo', {
+            'fields': ('usuario', 'dispositivo', 'device_id', 'device_name')
+        }),
+        ('Datos a Sincronizar', {
+            'fields': ('tipo_dato', 'cantidad_registros', 'ids_registros')
+        }),
+        ('Estado', {
+            'fields': ('estado', 'progreso_barra_readonly', 'tiene_conflicto')
+        }),
+        ('Versiones', {
+            'fields': ('version_local', 'version_servidor')
+        }),
+        ('Conflictos', {
+            'fields': ('datos_conflictivos', 'resolucion_conflicto'),
+            'classes': ('collapse',)
+        }),
+        ('Rendimiento', {
+            'fields': ('fecha_inicio_sincro', 'fecha_fin_sincro', 'tiempo_sincro_ms', 'velocidad_calc', 'tamaño_descarga_kb')
+        }),
+        ('Log y Errores', {
+            'fields': ('log_sincro_preview', 'error_mensaje'),
+            'classes': ('collapse',)
+        }),
+        ('Auditoría', {
+            'fields': ('creado_en', 'actualizado_en'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['reintento_sincro', 'resolver_conflictos_servidor', 'resolver_conflictos_dispositivo']
+    
+    def usuario_nombre(self, obj):
+        return obj.usuario.nombre if hasattr(obj.usuario, 'nombre') else str(obj.usuario)
+    usuario_nombre.short_description = 'Usuario'
+    
+    def dispositivo_nombre(self, obj):
+        return obj.device_name or obj.get_dispositivo_display()
+    dispositivo_nombre.short_description = 'Dispositivo'
+    
+    def tipo_dato_badge(self, obj):
+        colores = {
+            'ventas': '#007bff',
+            'clientes': '#28a745',
+            'productos': '#ffc107',
+            'reportes': '#17a2b8',
+            'predicciones': '#6f42c1',
+        }
+        color = colores.get(obj.tipo_dato, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 3px;">{}</span>',
+            color, obj.get_tipo_dato_display()
+        )
+    tipo_dato_badge.short_description = 'Tipo de Dato'
+    
+    def estado_badge(self, obj):
+        colores = {
+            'pendiente': '#ffc107',
+            'sincronizando': '#17a2b8',
+            'completado': '#28a745',
+            'conflicto': '#dc3545',
+            'fallido': '#6c757d'
+        }
+        color = colores.get(obj.estado, '#6c757d')
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 10px; border-radius: 3px;">{}</span>',
+            color, obj.get_estado_display()
+        )
+    estado_badge.short_description = 'Estado'
+    
+    def progreso_barra(self, obj):
+        return f"{obj.progreso_porcentaje}%"
+    progreso_barra.short_description = 'Progreso'
+    
+    def progreso_barra_readonly(self, obj):
+        return format_html(
+            '<div style="width: 100%; background-color: #e9ecef; border-radius: 5px; overflow: hidden;">'
+            '<div style="width: {}%; background-color: #28a745; height: 25px; text-align: center; color: white; line-height: 25px; font-weight: bold;">{}%</div>'
+            '</div>',
+            obj.progreso_porcentaje, obj.progreso_porcentaje
+        )
+    progreso_barra_readonly.short_description = 'Progreso Detallado'
+    
+    def tamaño_descarga_display(self, obj):
+        if obj.tamaño_descarga_kb > 1024:
+            return f"{obj.tamaño_descarga_kb / 1024:.1f} MB"
+        return f"{obj.tamaño_descarga_kb} KB"
+    tamaño_descarga_display.short_description = 'Tamaño'
+    
+    def velocidad_display(self, obj):
+        velocidad = obj.calcular_velocidad_sincro()
+        return f"{velocidad:.1f} KB/s" if velocidad > 0 else "N/A"
+    velocidad_display.short_description = 'Velocidad'
+    
+    def velocidad_calc(self, obj):
+        velocidad = obj.calcular_velocidad_sincro()
+        return f"{velocidad:.2f} KB/s" if velocidad > 0 else "Aún sincronizando..."
+    velocidad_calc.short_description = 'Velocidad de Sincronización'
+    
+    def tiempo_transcurrido(self, obj):
+        if obj.fecha_inicio_sincro and obj.fecha_fin_sincro:
+            segundos = (obj.fecha_fin_sincro - obj.fecha_inicio_sincro).total_seconds()
+            return f"{int(segundos)} segundos"
+        return "En progreso..."
+    tiempo_transcurrido.short_description = 'Tiempo'
+    
+    def log_sincro_preview(self, obj):
+        if obj.log_sincro:
+            import json
+            log_str = json.dumps(obj.log_sincro, indent=2, ensure_ascii=False)
+            return format_html('<pre style="max-height: 300px; overflow-y: auto;">{}</pre>', log_str)
+        return "Sin eventos registrados"
+    log_sincro_preview.short_description = 'Log de Sincronización'
+    
+    def reintento_sincro(self, request, queryset):
+        updated = queryset.exclude(estado='completado').update(
+            estado='pendiente',
+            progreso_porcentaje=0,
+            error_mensaje=''
+        )
+        messages.info(request, f'{updated} sincronización(es) marcada(s) para reintentar')
+    reintento_sincro.short_description = '🔄 Reintentar Sincronización'
+    
+    def resolver_conflictos_servidor(self, request, queryset):
+        updated = queryset.filter(tiene_conflicto=True).update(
+            tiene_conflicto=False,
+            resolucion_conflicto='servidor',
+            estado='completado'
+        )
+        messages.success(request, f'{updated} conflicto(s) resuelto(s) con datos del servidor')
+    resolver_conflictos_servidor.short_description = '🖥️ Resolver con Servidor'
+    
+    def resolver_conflictos_dispositivo(self, request, queryset):
+        updated = queryset.filter(tiene_conflicto=True).update(
+            tiene_conflicto=False,
+            resolucion_conflicto='dispositivo',
+            estado='completado'
+        )
+        messages.success(request, f'{updated} conflicto(s) resuelto(s) con datos del dispositivo')
+    resolver_conflictos_dispositivo.short_description = '📱 Resolver con Dispositivo'
 

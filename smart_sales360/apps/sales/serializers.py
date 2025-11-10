@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion, ReporteVozMovil, CompartirReporte, PreferenciaNotificaciones, SincronizacionDatos
 from apps.authentication.models import DispositivosMoviles
 from apps.products.serializers import ProductoSerializer
 from apps.products.models import Productos
@@ -872,4 +872,151 @@ class PrediccionListadoSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'modelo', 'modelo_nombre', 'tipo', 'fecha_inicio_periodo',
             'fecha_fin_periodo', 'valor_predicho', 'valor_real', 'error_prediccion'
+        ]
+
+
+# ============================================================================
+# CU27: Serializers para Reportes por Voz en Móvil
+# ============================================================================
+
+class ReporteVozMovilSerializer(serializers.ModelSerializer):
+    """Serializer para Reportes por Voz en Móvil (CU27)"""
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    calidad_audio_display = serializers.CharField(source='get_calidad_audio_display', read_only=True)
+    reporte_titulo = serializers.CharField(source='reporte.titulo', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = ReporteVozMovil
+        fields = [
+            'id', 'usuario', 'usuario_nombre', 'archivo_audio', 'duracion_segundos',
+            'transcripcion', 'idioma_detectado', 'confianza_transcripcion',
+            'comando_detectado', 'parametros_extraidos', 'reporte_asociado',
+            'reporte_titulo', 'estado', 'estado_display', 'calidad_audio',
+            'calidad_audio_display', 'es_favorito', 'creado_en', 'fecha_procesamiento'
+        ]
+        read_only_fields = [
+            'id', 'usuario_nombre', 'transcripcion', 'comando_detectado',
+            'reporte_titulo', 'estado_display', 'creado_en', 'fecha_procesamiento'
+        ]
+
+
+class ReporteVozMovilCreateSerializer(serializers.ModelSerializer):
+    """Serializer para crear reportes por voz"""
+    class Meta:
+        model = ReporteVozMovil
+        fields = ['archivo_audio', 'duracion_segundos', 'idioma_detectado', 'calidad_audio']
+
+
+# ============================================================================
+# CU28: Serializers para Compartir Reportes
+# ============================================================================
+
+class CompartirReporteSerializer(serializers.ModelSerializer):
+    """Serializer para Compartir Reportes desde Móvil (CU28)"""
+    reporte_titulo = serializers.CharField(source='reporte.titulo', read_only=True)
+    usuario_origen_nombre = serializers.CharField(source='usuario_origen.nombre', read_only=True)
+    metodo_display = serializers.CharField(source='get_metodo_display', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    
+    class Meta:
+        model = CompartirReporte
+        fields = [
+            'id', 'reporte', 'reporte_titulo', 'usuario_origen', 'usuario_origen_nombre',
+            'metodo', 'metodo_display', 'destinatarios', 'mensaje_personalizado',
+            'incluir_graficos', 'incluir_datos_sensibles', 'estado', 'estado_display',
+            'intentos_envio', 'fecha_envio_exitoso', 'error_mensaje', 'token_publico',
+            'fecha_expiracion_link', 'creado_en'
+        ]
+        read_only_fields = [
+            'id', 'reporte_titulo', 'usuario_origen_nombre', 'estado_display',
+            'intentos_envio', 'fecha_envio_exitoso', 'error_mensaje', 'creado_en'
+        ]
+
+
+class CompartirReporteCreateSerializer(serializers.ModelSerializer):
+    """Serializer para crear compartición de reporte"""
+    class Meta:
+        model = CompartirReporte
+        fields = [
+            'reporte', 'metodo', 'destinatarios', 'mensaje_personalizado',
+            'incluir_graficos', 'incluir_datos_sensibles'
+        ]
+
+
+# ============================================================================
+# CU29: Serializers para Preferencias de Notificaciones
+# ============================================================================
+
+class PreferenciaNotificacionesSerializer(serializers.ModelSerializer):
+    """Serializer para Preferencias de Notificaciones (CU29)"""
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    frecuencia_general_display = serializers.CharField(source='get_frecuencia_general_display', read_only=True)
+    
+    class Meta:
+        model = PreferenciaNotificaciones
+        fields = [
+            'id', 'usuario', 'usuario_nombre', 'notificaciones_activas', 'frecuencia_general',
+            'frecuencia_general_display', 'config_tipos', 'canales_habilitados',
+            'horario_silencio_activo', 'horario_silencio_inicio', 'horario_silencio_fin',
+            'palabras_clave_filtro', 'creado_en', 'actualizado_en'
+        ]
+        read_only_fields = ['id', 'usuario_nombre', 'creado_en']
+
+
+class PreferenciaNotificacionesUpdateSerializer(serializers.ModelSerializer):
+    """Serializer para actualizar preferencias"""
+    class Meta:
+        model = PreferenciaNotificaciones
+        fields = [
+            'notificaciones_activas', 'frecuencia_general', 'config_tipos',
+            'canales_habilitados', 'horario_silencio_activo', 'horario_silencio_inicio',
+            'horario_silencio_fin', 'palabras_clave_filtro'
+        ]
+
+
+# ============================================================================
+# CU30: Serializers para Sincronización de Datos Offline/Online
+# ============================================================================
+
+class SincronizacionDatosSerializer(serializers.ModelSerializer):
+    """Serializer para Sincronización de Datos (CU30)"""
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    tipo_dato_display = serializers.CharField(source='get_tipo_dato_display', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    dispositivo_display = serializers.CharField(source='get_dispositivo_display', read_only=True)
+    resolucion_conflicto_display = serializers.CharField(
+        source='get_resolucion_conflicto_display', read_only=True, allow_null=True
+    )
+    velocidad_sincro = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = SincronizacionDatos
+        fields = [
+            'id', 'usuario', 'usuario_nombre', 'dispositivo', 'dispositivo_display',
+            'device_id', 'device_name', 'tipo_dato', 'tipo_dato_display',
+            'cantidad_registros', 'ids_registros', 'estado', 'estado_display',
+            'progreso_porcentaje', 'version_local', 'version_servidor',
+            'tiene_conflicto', 'datos_conflictivos', 'resolucion_conflicto',
+            'resolucion_conflicto_display', 'creado_en', 'actualizado_en',
+            'fecha_inicio_sincro', 'fecha_fin_sincro', 'tiempo_sincro_ms',
+            'velocidad_sincro', 'error_mensaje', 'tamaño_descarga_kb'
+        ]
+        read_only_fields = [
+            'id', 'usuario_nombre', 'estado_display', 'dispositivo_display',
+            'tipo_dato_display', 'creado_en', 'actualizado_en', 'velocidad_sincro'
+        ]
+    
+    def get_velocidad_sincro(self, obj):
+        """Calcula la velocidad de sincronización"""
+        return round(obj.calcular_velocidad_sincro(), 2)
+
+
+class SincronizacionDatosCreateSerializer(serializers.ModelSerializer):
+    """Serializer para crear solicitud de sincronización"""
+    class Meta:
+        model = SincronizacionDatos
+        fields = [
+            'dispositivo', 'device_id', 'device_name', 'tipo_dato',
+            'ids_registros', 'version_local'
         ]

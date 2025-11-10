@@ -3,7 +3,9 @@ from .views import (
     CartViewSet, CartItemViewSet, VentaViewSet, PagoViewSet,
     VentaComprobantePDFViewSet, VentaHistoricoViewSet, VentaDashboardViewSet,
     DispositivoMovilViewSet, VentaMovilViewSet, NotificacionPushViewSet,
-    ReporteViewSet, PromptFrecuenteViewSet, ModeloIAViewSet, PrediccionViewSet
+    ReporteViewSet, PromptFrecuenteViewSet, ModeloIAViewSet, PrediccionViewSet,
+    ReporteVozMovilViewSet, CompartirReporteViewSet, PreferenciaNotificacionesViewSet,
+    SincronizacionDatosViewSet
 )
 
 router = DefaultRouter()
@@ -26,5 +28,13 @@ router.register(r'prompts', PromptFrecuenteViewSet, basename='prompts')
 # CU25-26: Predicciones e IA
 router.register(r'modelos-ia', ModeloIAViewSet, basename='modelos-ia')
 router.register(r'predicciones', PrediccionViewSet, basename='predicciones')
+# CU27: Reportes por voz en móvil
+router.register(r'reportes-voz-movil', ReporteVozMovilViewSet, basename='reportes-voz-movil')
+# CU28: Compartir reportes desde móvil
+router.register(r'compartir-reportes', CompartirReporteViewSet, basename='compartir-reportes')
+# CU29: Preferencias de notificaciones
+router.register(r'preferencias-notificaciones', PreferenciaNotificacionesViewSet, basename='preferencias-notificaciones')
+# CU30: Sincronización offline/online
+router.register(r'sincronizacion', SincronizacionDatosViewSet, basename='sincronizacion')
 
 urlpatterns = router.urls

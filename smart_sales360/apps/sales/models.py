@@ -847,3 +847,339 @@ class Prediccion(models.Model):
             self.save()
             return self.error_prediccion
         return None
+
+
+# ============================================================================
+# CU27: Generar Reporte por Voz en Móvil
+# ============================================================================
+
+class ReporteVozMovil(models.Model):
+    """
+    CU27: Gestiona reportes generados por voz desde aplicación móvil
+    Incluye grabación, transcripción y análisis de comandos de voz
+    """
+    ESTADO_CHOICES = [
+        ('grabando', 'Grabando'),
+        ('procesando', 'Procesando'),
+        ('completado', 'Completado'),
+        ('error', 'Error'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.ForeignKey('authentication.Usuarios', models.CASCADE, related_name='reportes_voz_movil')
+    
+    # Información de la grabación
+    archivo_audio = models.FileField(upload_to='audio_reportes/%Y/%m/%d/', help_text="Archivo de audio grabado")
+    duracion_segundos = models.IntegerField(default=0, help_text="Duración de la grabación en segundos")
+    
+    # Procesamiento de voz
+    transcripcion = models.TextField(blank=True, null=True, help_text="Texto transcrito de la voz")
+    idioma_detectado = models.CharField(max_length=10, default='es-ES', help_text="Idioma detectado en la grabación")
+    confianza_transcripcion = models.DecimalField(max_digits=5, decimal_places=4, default=0, help_text="Confianza del reconocimiento de voz (0-1)")
+    
+    # Análisis de comandos
+    comando_detectado = models.CharField(max_length=100, blank=True, null=True, help_text="Comando de voz interpretado")
+    parametros_extraidos = models.JSONField(default=dict, blank=True, help_text="Parámetros extraídos del comando")
+    
+    # Reporte generado
+    reporte_asociado = models.ForeignKey(Reporte, models.SET_NULL, null=True, blank=True, related_name='reportes_voz_origen')
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='grabando')
+    
+    # Feedback y control
+    calidad_audio = models.CharField(max_length=20, default='normal', choices=[
+        ('excelente', 'Excelente'),
+        ('buena', 'Buena'),
+        ('normal', 'Normal'),
+        ('pobre', 'Pobre'),
+    ])
+    es_favorito = models.BooleanField(default=False, help_text="Guardar como comando favorito")
+    
+    # Auditoría
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+    fecha_procesamiento = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        managed = True
+        db_table = 'reportes_voz_movil'
+        ordering = ['-creado_en']
+        verbose_name = 'Reporte por Voz Móvil'
+        verbose_name_plural = 'Reportes por Voz Móvil'
+        indexes = [
+            models.Index(fields=['usuario', '-creado_en']),
+            models.Index(fields=['estado']),
+        ]
+    
+    def __str__(self):
+        return f"Voz - {self.usuario} - {self.creado_en.strftime('%d/%m/%Y %H:%M')}"
+    
+    def marcar_como_favorito(self):
+        """Marcar comando de voz como favorito para reutilización rápida"""
+        self.es_favorito = True
+        self.save()
+
+
+# ============================================================================
+# CU28: Compartir Reporte desde Móvil
+# ============================================================================
+
+class CompartirReporte(models.Model):
+    """
+    CU28: Gestiona el compartir reportes desde la aplicación móvil
+    Permite compartir por email, WhatsApp, SMS y redes sociales
+    """
+    METODO_COMPARTIR_CHOICES = [
+        ('email', 'Email'),
+        ('whatsapp', 'WhatsApp'),
+        ('sms', 'SMS'),
+        ('facebook', 'Facebook'),
+        ('instagram', 'Instagram'),
+        ('linkedin', 'LinkedIn'),
+        ('link_publico', 'Link Público'),
+    ]
+    
+    ESTADO_ENVIO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('enviando', 'Enviando'),
+        ('enviado', 'Enviado'),
+        ('fallido', 'Fallido'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    reporte = models.ForeignKey(Reporte, models.CASCADE, related_name='comparticiones')
+    usuario_origen = models.ForeignKey('authentication.Usuarios', models.CASCADE, related_name='reportes_compartidos')
+    
+    # Información de compartición
+    metodo = models.CharField(max_length=20, choices=METODO_COMPARTIR_CHOICES)
+    destinatarios = models.JSONField(help_text="Lista de destinatarios: [{'email': 'user@example.com', 'nombre': 'User'}]")
+    
+    # Customización
+    mensaje_personalizado = models.TextField(blank=True, null=True, help_text="Mensaje adicional al compartir")
+    incluir_graficos = models.BooleanField(default=True, help_text="Incluir gráficos en el compartir")
+    incluir_datos_sensibles = models.BooleanField(default=False, help_text="Incluir datos sensibles/confidenciales")
+    
+    # Estado del envío
+    estado = models.CharField(max_length=20, choices=ESTADO_ENVIO_CHOICES, default='pendiente')
+    intentos_envio = models.IntegerField(default=0)
+    fecha_envio_exitoso = models.DateTimeField(null=True, blank=True)
+    error_mensaje = models.TextField(blank=True, null=True)
+    
+    # Link público (si aplica)
+    token_publico = models.CharField(max_length=255, unique=True, blank=True, null=True)
+    fecha_expiracion_link = models.DateTimeField(null=True, blank=True)
+    
+    # Auditoría
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        managed = True
+        db_table = 'compartir_reportes'
+        ordering = ['-creado_en']
+        verbose_name = 'Compartir Reporte'
+        verbose_name_plural = 'Comparticiones de Reportes'
+        indexes = [
+            models.Index(fields=['reporte', 'estado']),
+            models.Index(fields=['usuario_origen', '-creado_en']),
+            models.Index(fields=['token_publico']),
+        ]
+    
+    def __str__(self):
+        return f"{self.reporte.titulo} - {self.get_metodo_display()} - {self.creado_en.strftime('%d/%m/%Y')}"
+
+
+# ============================================================================
+# CU29: Configurar Preferencias de Notificaciones
+# ============================================================================
+
+class PreferenciaNotificaciones(models.Model):
+    """
+    CU29: Gestiona las preferencias de notificaciones del usuario
+    Controla qué tipo de notificaciones recibe y por qué medio
+    """
+    FRECUENCIA_CHOICES = [
+        ('inmediata', 'Inmediata'),
+        ('cada_hora', 'Cada Hora'),
+        ('cada_6_horas', 'Cada 6 Horas'),
+        ('diaria', 'Diaria'),
+        ('semanal', 'Semanal'),
+        ('nunca', 'Nunca'),
+    ]
+    
+    TIPO_NOTIFICACION_CHOICES = [
+        ('reporte_completado', 'Reporte Completado'),
+        ('alerta_venta', 'Alerta de Venta'),
+        ('prediccion_actualizada', 'Predicción Actualizada'),
+        ('inventario_bajo', 'Inventario Bajo'),
+        ('nuevo_cliente', 'Nuevo Cliente'),
+        ('vencimiento_promocion', 'Vencimiento de Promoción'),
+        ('recordatorio_tareas', 'Recordatorio de Tareas'),
+        ('sistema', 'Notificaciones del Sistema'),
+    ]
+    
+    CANAL_NOTIFICACION_CHOICES = [
+        ('push', 'Notificación Push'),
+        ('email', 'Email'),
+        ('sms', 'SMS'),
+        ('whatsapp', 'WhatsApp'),
+        ('web', 'Notificación Web'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.OneToOneField('authentication.Usuarios', models.CASCADE, related_name='preferencias_notificaciones')
+    
+    # Preferencias por tipo de notificación
+    notificaciones_activas = models.BooleanField(default=True, help_text="Activar/Desactivar todas las notificaciones")
+    
+    # Configuración de frecuencia
+    frecuencia_general = models.CharField(max_length=20, choices=FRECUENCIA_CHOICES, default='diaria')
+    
+    # Configuración por tipo
+    config_tipos = models.JSONField(
+        default=dict,
+        help_text="Configuración por tipo: {'reporte_completado': {'frecuencia': 'inmediata', 'canales': ['push', 'email']}}"
+    )
+    
+    # Canales preferidos
+    canales_habilitados = models.JSONField(
+        default=list,
+        help_text="Canales habilitados globalmente: ['push', 'email', 'sms']"
+    )
+    
+    # Horarios silencioso (no enviar notificaciones)
+    horario_silencio_activo = models.BooleanField(default=False, help_text="Activar horario silencioso")
+    horario_silencio_inicio = models.TimeField(null=True, blank=True, help_text="Inicio del horario silencioso")
+    horario_silencio_fin = models.TimeField(null=True, blank=True, help_text="Fin del horario silencioso")
+    
+    # Palabras clave de filtrado
+    palabras_clave_filtro = models.JSONField(
+        default=list,
+        help_text="Solo recibir notificaciones con estas palabras clave"
+    )
+    
+    # Auditoría
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        managed = True
+        db_table = 'preferencias_notificaciones'
+        verbose_name = 'Preferencia de Notificaciones'
+        verbose_name_plural = 'Preferencias de Notificaciones'
+    
+    def __str__(self):
+        return f"Preferencias de {self.usuario}"
+    
+    def esta_en_horario_silencio(self):
+        """Verifica si el usuario está en horario silencioso"""
+        if not self.horario_silencio_activo:
+            return False
+        
+        now = timezone.now().time()
+        if self.horario_silencio_inicio <= self.horario_silencio_fin:
+            return self.horario_silencio_inicio <= now <= self.horario_silencio_fin
+        else:  # Horario nocturno (ej: 22:00 a 08:00)
+            return now >= self.horario_silencio_inicio or now <= self.horario_silencio_fin
+
+
+# ============================================================================
+# CU30: Sincronizar Datos Offline/Online
+# ============================================================================
+
+class SincronizacionDatos(models.Model):
+    """
+    CU30: Gestiona la sincronización de datos entre móvil offline y servidor online
+    Registra qué datos se han sincronizado y el estado de la sincronización
+    """
+    TIPO_DATO_CHOICES = [
+        ('ventas', 'Ventas'),
+        ('clientes', 'Clientes'),
+        ('productos', 'Productos'),
+        ('reportes', 'Reportes'),
+        ('predicciones', 'Predicciones'),
+        ('prompts', 'Prompts Frecuentes'),
+        ('carrito', 'Carrito'),
+    ]
+    
+    ESTADO_SINCRO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('sincronizando', 'Sincronizando'),
+        ('completado', 'Completado'),
+        ('conflicto', 'Conflicto'),
+        ('fallido', 'Fallido'),
+    ]
+    
+    DISPOSITIVO_CHOICES = [
+        ('movil_android', 'Móvil Android'),
+        ('movil_ios', 'Móvil iOS'),
+        ('tablet_android', 'Tablet Android'),
+        ('tablet_ios', 'Tablet iOS'),
+        ('web', 'Web'),
+    ]
+    
+    id = models.BigAutoField(primary_key=True)
+    usuario = models.ForeignKey('authentication.Usuarios', models.CASCADE, related_name='sincronizaciones')
+    dispositivo = models.CharField(max_length=20, choices=DISPOSITIVO_CHOICES)
+    
+    # Identificación del dispositivo
+    device_id = models.CharField(max_length=255, help_text="ID único del dispositivo")
+    device_name = models.CharField(max_length=255, blank=True, null=True, help_text="Nombre del dispositivo")
+    
+    # Datos a sincronizar
+    tipo_dato = models.CharField(max_length=20, choices=TIPO_DATO_CHOICES)
+    cantidad_registros = models.IntegerField(default=0, help_text="Cantidad de registros a sincronizar")
+    ids_registros = models.JSONField(default=list, help_text="IDs de los registros a sincronizar")
+    
+    # Estado de sincronización
+    estado = models.CharField(max_length=20, choices=ESTADO_SINCRO_CHOICES, default='pendiente')
+    progreso_porcentaje = models.IntegerField(default=0, help_text="Progreso de sincronización 0-100%")
+    
+    # Información de versiones
+    version_local = models.CharField(max_length=20, blank=True, null=True, help_text="Versión de datos en dispositivo")
+    version_servidor = models.CharField(max_length=20, blank=True, null=True, help_text="Versión de datos en servidor")
+    
+    # Conflictos
+    tiene_conflicto = models.BooleanField(default=False)
+    datos_conflictivos = models.JSONField(default=dict, blank=True, help_text="Datos que generaron conflicto")
+    resolucion_conflicto = models.CharField(
+        max_length=20,
+        choices=[('servidor', 'Usar servidor'), ('dispositivo', 'Usar dispositivo'), ('manual', 'Resolución manual')],
+        blank=True,
+        null=True
+    )
+    
+    # Auditoría y tiempos
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
+    fecha_inicio_sincro = models.DateTimeField(null=True, blank=True)
+    fecha_fin_sincro = models.DateTimeField(null=True, blank=True)
+    tiempo_sincro_ms = models.IntegerField(default=0, help_text="Tiempo de sincronización en milisegundos")
+    
+    # Log y errores
+    log_sincro = models.JSONField(default=list, blank=True, help_text="Log detallado de la sincronización")
+    error_mensaje = models.TextField(blank=True, null=True)
+    
+    # Cache y datos descargados
+    datos_descargados = models.JSONField(default=dict, blank=True, help_text="Datos sincronizados exitosamente")
+    tamaño_descarga_kb = models.IntegerField(default=0, help_text="Tamaño descargado en KB")
+    
+    class Meta:
+        managed = True
+        db_table = 'sincronizacion_datos'
+        ordering = ['-creado_en']
+        verbose_name = 'Sincronización de Datos'
+        verbose_name_plural = 'Sincronizaciones de Datos'
+        indexes = [
+            models.Index(fields=['usuario', 'dispositivo']),
+            models.Index(fields=['estado']),
+            models.Index(fields=['tipo_dato', '-creado_en']),
+        ]
+    
+    def __str__(self):
+        return f"{self.usuario} - {self.get_tipo_dato_display()} - {self.get_estado_display()}"
+    
+    def calcular_velocidad_sincro(self):
+        """Calcula la velocidad de sincronización en KB/s"""
+        if self.tiempo_sincro_ms > 0:
+            return (self.tamaño_descarga_kb / (self.tiempo_sincro_ms / 1000))
+        return 0
