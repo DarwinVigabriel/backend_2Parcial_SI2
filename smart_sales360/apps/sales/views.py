@@ -79,7 +79,9 @@ class CartViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         # Si es admin/staff, mostrar todos los carritos
-        if self.request.user.is_staff or self.request.user.is_superuser:
+        is_staff = getattr(self.request.user, 'is_staff', False)
+        is_superuser = getattr(self.request.user, 'is_superuser', False)
+        if is_staff or is_superuser:
             return queryset
         # Si es usuario regular, filtrar por sus carritos
         if self.request.user.is_authenticated and hasattr(self.request.user, 'usuarios'):
@@ -1682,7 +1684,9 @@ class DispositivoMovilViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filtrar dispositivos del usuario autenticado"""
-        if self.request.user.is_staff or self.request.user.is_superuser:
+        is_staff = getattr(self.request.user, 'is_staff', False)
+        is_superuser = getattr(self.request.user, 'is_superuser', False)
+        if is_staff or is_superuser:
             return DispositivosMoviles.objects.all()
         # Filtrar por usuario autenticado
         return DispositivosMoviles.objects.filter(usuario__user=self.request.user)
@@ -1727,7 +1731,9 @@ class VentaMovilViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filtrar ventas del usuario o cliente autenticado"""
-        if self.request.user.is_staff or self.request.user.is_superuser:
+        is_staff = getattr(self.request.user, 'is_staff', False)
+        is_superuser = getattr(self.request.user, 'is_superuser', False)
+        if is_staff or is_superuser:
             return Venta.objects.all()
         # Filtrar ventas del usuario
         return Venta.objects.filter(usuario__user=self.request.user)
@@ -1883,7 +1889,9 @@ class NotificacionPushViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filtrar notificaciones del usuario"""
-        if self.request.user.is_staff or self.request.user.is_superuser:
+        is_staff = getattr(self.request.user, 'is_staff', False)
+        is_superuser = getattr(self.request.user, 'is_superuser', False)
+        if is_staff or is_superuser:
             return NotificacionPush.objects.all()
         try:
             usuario = self.request.user.usuarios

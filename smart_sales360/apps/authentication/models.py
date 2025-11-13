@@ -1,13 +1,21 @@
 from django.db import models
+import uuid
 
 
 class Usuarios(models.Model):
-    id = models.UUIDField(primary_key=True)
+    ROLE_CHOICES = [
+        ('admin', 'Administrador'),
+        ('vendedor', 'Vendedor'),
+        ('cliente', 'Cliente'),
+        ('gerente', 'Gerente'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.CharField(unique=True, max_length=255)
     password_hash = models.CharField(max_length=255)
     nombre = models.CharField(max_length=100)
     apellido = models.CharField(max_length=100)
-    rol = models.CharField(max_length=20, blank=True, null=True)
+    rol = models.CharField(max_length=20, blank=True, null=True, choices=ROLE_CHOICES)
     telefono = models.CharField(max_length=20, blank=True, null=True)
     avatar_url = models.TextField(blank=True, null=True)
     activo = models.BooleanField(blank=True, null=True)

@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-8t5=m3k+f6y@o(c6*)t6@%t607vpbv)p!5$&rqiwk6v95er7so
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', '192.168.0.4']
 
 # Load environment variables from a .env file (if python-dotenv is installed).
 try:

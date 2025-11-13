@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.contrib.auth.hashers import make_password
 from .models import Usuarios, UserSessions, DispositivosMoviles, NotificacionPreferencias, Notificaciones, AuditLogs
 
 
@@ -6,6 +7,17 @@ from .models import Usuarios, UserSessions, DispositivosMoviles, NotificacionPre
 class UsuariosAdmin(admin.ModelAdmin):
     list_display = ('email', 'nombre', 'apellido', 'activo')
     search_fields = ('email', 'nombre', 'apellido')
+    
+    def save_model(self, request, obj, form, change):
+        # Si es creación nueva o la contraseña cambió, hashearla
+        if change and 'password_hash' in form.changed_data:
+            # Edición y cambió la contraseña
+            obj.password_hash = make_password(obj.password_hash)
+        elif not change:
+            # Creación nueva
+            if obj.password_hash:
+                obj.password_hash = make_password(obj.password_hash)
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(UserSessions)

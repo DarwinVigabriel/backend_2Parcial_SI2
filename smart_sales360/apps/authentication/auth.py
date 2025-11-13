@@ -9,6 +9,8 @@ class SimpleUser:
     def __init__(self, id, email):
         self.id = id
         self.email = email
+        self.is_staff = False
+        self.is_superuser = False
 
     @property
     def is_authenticated(self):

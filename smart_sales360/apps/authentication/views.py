@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth.hashers import check_password
@@ -53,6 +54,7 @@ class LoginView(APIView):
     that fails (covers simple legacy hashes). Adjust as needed for your
     project's password hashing scheme.
     """
+    permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
         serializer = LoginSerializer(data=request.data)
