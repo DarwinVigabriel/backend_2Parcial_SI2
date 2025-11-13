@@ -440,6 +440,93 @@ class Pago(models.Model):
         return self.estado == 'completado'
 
 
+# ============================================================================
+# CU17, CU18: Orden (Checkout) y Historial de Órdenes
+# ============================================================================
+
+class Orden(models.Model):
+    """
+    CU17: Realizar Compra (Checkout)
+    CU18: Historial de Órdenes
+    Modelo para almacenar órdenes generadas desde el carrito en la app móvil
+    """
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente de Pago'),
+        ('pagada', 'Pagada'),
+        ('confirmada', 'Confirmada'),
+        ('enviada', 'Enviada'),
+        ('entregada', 'Entregada'),
+        ('cancelada', 'Cancelada'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    usuario = models.ForeignKey('authentication.Usuarios', models.CASCADE, related_name='ordenes')
+    carrito = models.ForeignKey('sales.Cart', models.SET_NULL, null=True, blank=True, related_name='orden')
+    
+    # Información de montos
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    impuesto = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
+    # Estado
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    
+    # Información de pago
+    stripe_session_id = models.CharField(max_length=255, blank=True, null=True, help_text="ID de sesión de Stripe")
+    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, null=True, help_text="ID del Payment Intent de Stripe")
+    metodo_pago = models.CharField(max_length=50, blank=True, null=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    pagada_en = models.DateTimeField(null=True, blank=True)
+    entregada_en = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        managed = True
+        db_table = 'ordenes'
+        ordering = ['-created_at']
+        verbose_name = 'Orden'
+        verbose_name_plural = 'Órdenes'
+        indexes = [
+            models.Index(fields=['usuario', '-created_at']),
+            models.Index(fields=['estado']),
+        ]
+    
+    def __str__(self):
+        return f"Orden {self.id} - {self.usuario} - ${self.total} ({self.estado})"
+    
+    @property
+    def numero_orden(self):
+        """Retorna número de orden basado en la fecha"""
+        return self.id.hex[:8].upper()
+
+
+class OrdenItem(models.Model):
+    """
+    CU17, CU18: Items de la orden
+    Detalle de productos incluidos en cada orden
+    """
+    id = models.BigAutoField(primary_key=True)
+    orden = models.ForeignKey('sales.Orden', models.CASCADE, related_name='items')
+    producto = models.ForeignKey('products.Productos', models.DO_NOTHING)
+    
+    cantidad = models.IntegerField()
+    precio_unitario = models.DecimalField(max_digits=12, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        managed = True
+        db_table = 'orden_items'
+        verbose_name = 'Item de Orden'
+        verbose_name_plural = 'Items de Orden'
+    
+    def __str__(self):
+        return f"{self.producto.nombre} x{self.cantidad} - Orden {self.orden.id}"
+
+
 class NotificacionPush(models.Model):
     """
     CU20: Gestionar Notificaciones Push

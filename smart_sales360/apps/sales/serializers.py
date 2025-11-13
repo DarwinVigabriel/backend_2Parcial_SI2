@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion, ReporteVozMovil, CompartirReporte, PreferenciaNotificaciones, SincronizacionDatos
+from .models import Cart, CartItem, Venta, VentaDetalle, Pago, NotificacionPush, Reporte, PromptFrecuente, ModeloIA, Prediccion, ReporteVozMovil, CompartirReporte, PreferenciaNotificaciones, SincronizacionDatos, Orden, OrdenItem
 from apps.authentication.models import DispositivosMoviles
 from apps.products.serializers import ProductoSerializer
 from apps.products.models import Productos
@@ -41,6 +41,181 @@ class CartSerializer(serializers.ModelSerializer):
         model = Cart
         fields = ['id', 'usuario', 'cliente', 'status', 'total', 'items', 'items_count', 'created_at', 'updated_at']
         read_only_fields = ['id', 'total', 'created_at', 'updated_at']
+    
+    def get_items_count(self, obj):
+        return obj.items.count()
+
+
+# ============================================================================
+# CU17, CU18: Orden (Checkout) - Serializers
+# ============================================================================
+
+class OrdenItemSerializer(serializers.ModelSerializer):
+    """Serializer para items de la orden"""
+    producto_detail = ProductoSerializer(source='producto', read_only=True)
+    
+    class Meta:
+        model = OrdenItem
+        fields = ['id', 'producto', 'producto_detail', 'cantidad', 'precio_unitario', 'subtotal', 'created_at']
+        read_only_fields = ['id', 'subtotal', 'created_at']
+
+
+class OrdenSerializer(serializers.ModelSerializer):
+    """Serializer completo para órdenes"""
+    items = OrdenItemSerializer(many=True, read_only=True)
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    numero_orden = serializers.CharField(read_only=True)
+    
+    class Meta:
+        model = Orden
+        fields = [
+            'id', 'numero_orden', 'usuario', 'usuario_nombre', 'carrito',
+            'subtotal', 'impuesto', 'total', 'estado', 'estado_display',
+            'stripe_session_id', 'stripe_payment_intent_id', 'metodo_pago',
+            'items', 'created_at', 'updated_at', 'pagada_en', 'entregada_en'
+        ]
+        read_only_fields = [
+            'id', 'numero_orden', 'usuario_nombre', 'estado_display',
+            'stripe_session_id', 'stripe_payment_intent_id', 'created_at', 'updated_at',
+            'pagada_en', 'entregada_en'
+        ]
+
+
+class OrdenCreateSerializer(serializers.Serializer):
+    """Serializer para crear una orden desde el carrito"""
+    carrito_id = serializers.UUIDField(required=True)
+    
+    def validate_carrito_id(self, value):
+        try:
+            cart = Cart.objects.get(id=value)
+            if cart.status != 'open':
+                raise serializers.ValidationError("El carrito no está abierto")
+            if not cart.items.exists():
+                raise serializers.ValidationError("El carrito está vacío")
+        except Cart.DoesNotExist:
+            raise serializers.ValidationError("Carrito no encontrado")
+        return value
+    
+    def create(self, validated_data):
+        """Crear orden desde carrito"""
+        from django.db import transaction
+        
+        carrito = Cart.objects.get(id=validated_data['carrito_id'])
+        usuario = self.context['request'].user
+        
+        with transaction.atomic():
+            # Calcular totales
+            subtotal = sum(item.subtotal for item in carrito.items.all())
+            impuesto = Decimal('0')  # Se calcula en el checkout
+            total = subtotal
+            
+            # Crear orden
+            orden = Orden.objects.create(
+                usuario=usuario,
+                carrito=carrito,
+                subtotal=subtotal,
+                impuesto=impuesto,
+                total=total,
+                estado='pendiente'
+            )
+            
+            # Crear items de orden
+            for item in carrito.items.all():
+                OrdenItem.objects.create(
+                    orden=orden,
+                    producto=item.producto,
+                    cantidad=item.quantity,
+                    precio_unitario=item.price,
+                    subtotal=item.subtotal
+                )
+            
+            return orden
+
+
+class OrdenCheckoutSerializer(serializers.Serializer):
+    """
+    CU17: Serializer para procesar checkout con Stripe
+    """
+    orden_id = serializers.UUIDField(required=True)
+    
+    def validate_orden_id(self, value):
+        try:
+            orden = Orden.objects.get(id=value)
+            if orden.estado != 'pendiente':
+                raise serializers.ValidationError("La orden no está en estado pendiente")
+        except Orden.DoesNotExist:
+            raise serializers.ValidationError("Orden no encontrada")
+        return value
+    
+    def create(self, validated_data):
+        """
+        Procesar checkout con Stripe
+        Retorna session_id de Stripe para redirigir al checkout
+        """
+        import os
+        import stripe
+        
+        orden = Orden.objects.get(id=validated_data['orden_id'])
+        stripe.api_key = os.getenv('STRIPE_SECRET_KEY', 'sk_test_')
+        
+        try:
+            # Crear sesión de Stripe Checkout
+            session = stripe.checkout.Session.create(
+                payment_method_types=['card'],
+                line_items=[
+                    {
+                        'price_data': {
+                            'currency': 'usd',
+                            'product_data': {
+                                'name': 'Orden de Compra',
+                                'description': f'Orden #{orden.numero_orden}'
+                            },
+                            'unit_amount': int(orden.total * 100),  # Stripe usa centavos
+                        },
+                        'quantity': 1,
+                    }
+                ],
+                mode='payment',
+                success_url=os.getenv('STRIPE_SUCCESS_URL', 'http://localhost:3000/checkout/success'),
+                cancel_url=os.getenv('STRIPE_CANCEL_URL', 'http://localhost:3000/checkout/cancel'),
+                metadata={
+                    'orden_id': str(orden.id),
+                    'usuario_id': str(orden.usuario.id),
+                }
+            )
+            
+            # Guardar IDs de Stripe en la orden
+            orden.stripe_session_id = session.id
+            orden.stripe_payment_intent_id = session.payment_intent
+            orden.save()
+            
+            return {
+                'session_id': session.id,
+                'orden_id': str(orden.id)
+            }
+        
+        except stripe.error.StripeError as e:
+            raise serializers.ValidationError(f"Error de Stripe: {str(e)}")
+
+
+class OrdenHistorialSerializer(serializers.ModelSerializer):
+    """
+    CU18: Serializer para historial de órdenes
+    """
+    items = OrdenItemSerializer(many=True, read_only=True)
+    estado_display = serializers.CharField(source='get_estado_display', read_only=True)
+    numero_orden = serializers.CharField(read_only=True)
+    items_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Orden
+        fields = [
+            'id', 'numero_orden', 'subtotal', 'impuesto', 'total',
+            'estado', 'estado_display', 'metodo_pago', 'items_count',
+            'items', 'created_at', 'pagada_en', 'entregada_en'
+        ]
+        read_only_fields = fields
     
     def get_items_count(self, obj):
         return obj.items.count()
